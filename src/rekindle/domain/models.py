@@ -85,6 +85,7 @@ class ExtractedFields(_StrictModel):
     confidence: float = Field(default=0.5, ge=0, le=1)
     source: ExtractSource = ExtractSource.RULE
     todos: list[TodoDraft] = Field(default_factory=list)
+    attributes: dict[str, str] = Field(default_factory=dict)  # 自定义字段 key->值
 
     @field_validator('company', 'role', mode='before')
     @classmethod
@@ -198,3 +199,11 @@ class Settings(_StrictModel):
     def require(self, perm: Permission) -> None:
         if not self.allows(perm):
             raise PermissionDenied(perm)
+
+class FieldSpec(_StrictModel):
+    '''一个可抽取字段的定义（用于生成 LLM 提示词与校验自定义字段）。'''
+
+    key: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=40)
+    field_type: str = 'text'   # text / date / number
+    description: str = ''
