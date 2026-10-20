@@ -160,3 +160,41 @@ class Reminder(_StrictModel):
     notified_at: datetime | None = None
     snooze_until: datetime | None = None
     created_at: datetime
+
+
+class Permission(str, Enum):
+    '''AI 可以请求的、需要授权的动作（对应 §11.1 的开关）。'''
+
+    ADD_FIELD = 'add_field'
+    DELETE_FIELD = 'delete_field'
+    AUTO_COMMIT = 'auto_commit'
+    SNAPSHOT = 'snapshot'
+
+
+class PermissionDenied(RuntimeError):
+    '''权限不足：对应设置未开启（默认最小权限）。'''
+
+    def __init__(self, perm: Permission) -> None:
+        super().__init__(f'权限未开启：{perm.value}（默认最小权限）')
+        self.perm = perm
+
+
+class Settings(_StrictModel):
+    '''用户设置。AI 权限默认最小（全部关闭）。'''
+
+    ai_add_field: bool = False
+    ai_delete_field: bool = False
+    ai_auto_commit: bool = False
+    ai_snapshot: bool = False
+
+    auto_snapshot: bool = True
+    auto_snapshot_frequency: str = 'on_exit'   # on_startup / daily / on_exit
+    snapshot_keep: int = Field(default=30, ge=1, le=1000)
+    snapshot_dir: str = 'user_data/snapshots'
+
+    def allows(self, perm: Permission) -> bool:
+        return bool(getattr(self, 'ai_' + perm.value, False))
+
+    def require(self, perm: Permission) -> None:
+        if not self.allows(perm):
+            raise PermissionDenied(perm)

@@ -4,7 +4,7 @@
 
 ## 待办
 
-- [ ] 权限设置实现（AI 权限最小，§11.1）：settings 表 + 代码层开关
+- [ ] settings 表持久化（sqlite 仓库，随 infra 一起）
 - [ ] 存档系统 + 存档设置实现（§11.2/11.3）
 - [ ] T4 LLM 抽取实现：httpx + UTF-8；deepseek-flash；自定义字段 + 待办（多人/重复）
 - [ ] T5 M2~M4 里程碑：LLM 抽取/消歧/评测、GUI、提醒（见 docs/开发文档.md）
@@ -18,3 +18,4 @@
 - [x] T2 补充：待办实体（多人/时间/重复）设计（§10）
 - [x] T3 规则抽取：extract_rule.py + preview.py + 20 测试（离线）
 - [x] AI 权限关系原则加入 .clinerules；权限与存档设计（§11）
+- [x] 权限设置领域模型 + 代码层开关（Settings/Permission/require；38 测试全绿）
