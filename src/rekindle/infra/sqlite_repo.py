@@ -16,7 +16,9 @@ from rekindle.domain.errors import (
     AlreadyConfirmed,
     BackupFormatError,
     ImportTargetNotEmpty,
+    PersonNotFound,
 )
+from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.domain.models import (
     Capture,
     CaptureStatus,
@@ -27,7 +29,7 @@ from rekindle.domain.models import (
 )
 from rekindle.domain.normalize import normalize_name
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 _SCHEMA = (
     '''
@@ -51,6 +53,24 @@ _SCHEMA = (
     )
     ''',
     'CREATE INDEX ix_person_company_name ON person_company(company)',
+    '''
+    CREATE TABLE field (
+        key         TEXT PRIMARY KEY,
+        label       TEXT NOT NULL,
+        field_type  TEXT NOT NULL DEFAULT 'text',
+        description TEXT NOT NULL DEFAULT '',
+        builtin     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    '''
+    CREATE TABLE person_field (
+        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        field_key TEXT    NOT NULL REFERENCES field(key) ON DELETE CASCADE,
+        value     TEXT    NOT NULL,
+        PRIMARY KEY (person_id, field_key, value)
+    )
+    ''',
+    'CREATE INDEX ix_person_field_value ON person_field(value)',
     '''
     CREATE TABLE alias (
         id        INTEGER PRIMARY KEY,
@@ -88,10 +108,12 @@ _SCHEMA = (
 )
 
 # 导出顺序 = 外键的父 → 子；导入按同样顺序插入。
-_TABLES = ('person', 'alias', 'capture', 'interaction', 'person_company')
+_TABLES = ('person', 'alias', 'capture', 'interaction', 'person_company', 'person_field')
 
 # 旧结构（v1）里多出来的表；删表按子 → 父。
 _LEGACY_TABLES = (
+    'person_field',
+    'field',
     'person_company',
     'todo_person',
     'todo',
@@ -110,13 +132,16 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _person(row: sqlite3.Row, companies: dict[date, str]) -> Person:
+def _person(
+    row: sqlite3.Row, companies: dict[date, str], fields: dict[str, list[str]]
+) -> Person:
     return Person(
         id=row['id'],
         display_name=row['display_name'],
         pinyin=row['pinyin'],
         initials=row['initials'],
         companies=companies,
+        fields=fields,
         role=row['role'],
         notes=row['notes'],
         last_contact_at=_dt(row['last_contact_at']),
@@ -190,6 +215,13 @@ class SqliteRepo:
                     self._conn.execute(f'DROP TABLE IF EXISTS {table}')
             for statement in _SCHEMA:
                 self._conn.execute(statement)
+            for spec in DEFAULT_FIELDS:
+                self._conn.execute(
+                    'INSERT OR IGNORE INTO field '
+                    '(key, label, field_type, description, builtin) '
+                    'VALUES (?, ?, ?, ?, 1)',
+                    (spec.key, spec.label, spec.field_type, spec.description),
+                )
             self._conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
 
     @contextmanager
@@ -325,7 +357,60 @@ class SqliteRepo:
         return result
 
     def _load_person(self, row: sqlite3.Row) -> Person:
-        return _person(row, self._companies_of(int(row['id'])))
+        person_id = int(row['id'])
+        return _person(
+            row, self._companies_of(person_id), self._fields_of(person_id)
+        )
+
+    def _fields_of(self, person_id: int) -> dict[str, list[str]]:
+        rows = self._conn.execute(
+            'SELECT field_key, value FROM person_field '
+            'WHERE person_id = ? ORDER BY rowid',
+            (person_id,),
+        ).fetchall()
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            result.setdefault(str(row['field_key']), []).append(str(row['value']))
+        return result
+
+    def _fields_for(self, person_ids: list[int]) -> dict[int, dict[str, list[str]]]:
+        if not person_ids:
+            return {}
+        placeholders = ', '.join('?' for _ in person_ids)
+        rows = self._conn.execute(
+            f'SELECT person_id, field_key, value FROM person_field '
+            f'WHERE person_id IN ({placeholders}) ORDER BY rowid',
+            person_ids,
+        ).fetchall()
+        result: dict[int, dict[str, list[str]]] = {}
+        for row in rows:
+            result.setdefault(int(row['person_id']), {}).setdefault(
+                str(row['field_key']), []
+            ).append(str(row['value']))
+        return result
+
+    def _replace_fields(
+        self, person_id: int, fields: dict[str, list[str]]
+    ) -> None:
+        '''整体替换属性字段；只接受注册表里存在的 key。'''
+        allowed = {
+            str(row['key']) for row in self._conn.execute('SELECT key FROM field')
+        }
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f'未注册的字段：{sorted(unknown)}')
+        self._conn.execute(
+            'DELETE FROM person_field WHERE person_id = ?', (person_id,)
+        )
+        for key, values in fields.items():
+            for value in values:
+                text = value.strip()
+                if text:
+                    self._conn.execute(
+                        'INSERT OR IGNORE INTO person_field '
+                        '(person_id, field_key, value) VALUES (?, ?, ?)',
+                        (person_id, key, text),
+                    )
 
     def add_person(self, person: Person) -> int:
         with self._atomic():
@@ -344,6 +429,7 @@ class SqliteRepo:
             )
             person_id = int(cur.lastrowid or 0)
             self._replace_companies(person_id, person.companies)
+            self._replace_fields(person_id, person.fields)
             return person_id
 
     def update_person(self, person: Person) -> None:
@@ -365,6 +451,7 @@ class SqliteRepo:
                 ),
             )
             self._replace_companies(person.id, person.companies)
+            self._replace_fields(person.id, person.fields)
 
     def add_alias(self, person_id: int, text: str) -> None:
         # INSERT OR IGNORE + 唯一索引（I4）：重复加同一个称呼不会报错也不会写两条。
@@ -411,6 +498,32 @@ class SqliteRepo:
         ).fetchall()
         return [_interaction(row) for row in rows]
 
+    def update_interaction(self, interaction: Interaction) -> None:
+        if interaction.id is None:
+            raise ValueError('update_interaction 需要 interaction.id')
+        cur = self._conn.execute(
+            'UPDATE interaction SET occurred_at = ?, summary = ? WHERE id = ?',
+            (
+                interaction.occurred_at.isoformat(),
+                interaction.summary,
+                interaction.id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f'找不到 interaction #{interaction.id}')
+
+    def delete_interaction(self, interaction_id: int) -> None:
+        self._conn.execute(
+            'DELETE FROM interaction WHERE id = ?', (interaction_id,)
+        )
+
+    def archive_person(self, person_id: int) -> None:
+        cur = self._conn.execute(
+            'UPDATE person SET archived = 1 WHERE id = ?', (person_id,)
+        )
+        if cur.rowcount == 0:
+            raise PersonNotFound(person_id)
+
     # ---------- 查询 ----------
 
     def list_people(self, query: str = '', limit: int = 50) -> list[Person]:
@@ -432,15 +545,24 @@ class SqliteRepo:
                 'OR EXISTS (SELECT 1 FROM alias a WHERE a.person_id = p.id '
                 'AND a.text_norm LIKE ?) '
                 'OR EXISTS (SELECT 1 FROM person_company c '
-                'WHERE c.person_id = p.id AND c.company LIKE ?)) '
+                'WHERE c.person_id = p.id AND c.company LIKE ?) '
+                'OR EXISTS (SELECT 1 FROM person_field f '
+                'WHERE f.person_id = p.id AND f.value LIKE ?)) '
                 + order,
-                (like, like, like, alias_like, like, limit),
+                (like, like, like, alias_like, like, like, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(base + order, (limit,)).fetchall()
-        companies = self._companies_for([int(row['id']) for row in rows])
+        ids = [int(row['id']) for row in rows]
+        companies = self._companies_for(ids)
+        fields = self._fields_for(ids)
         return [
-            _person(row, companies.get(int(row['id']), {})) for row in rows
+            _person(
+                row,
+                companies.get(int(row['id']), {}),
+                fields.get(int(row['id']), {}),
+            )
+            for row in rows
         ]
 
     # ---------- 备份 ----------

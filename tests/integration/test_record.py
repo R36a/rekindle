@@ -142,6 +142,96 @@ def test_同一人不同时间的两家公司都会保留(repo: SqliteRepo) -> N
     assert person.current_company == '腾讯'
 
 
+def test_确认时保存联系方式(repo: SqliteRepo) -> None:
+    saved = record.record(repo, '和张三吃饭', NOW)
+    result = record.confirm(
+        repo,
+        saved.capture_id,
+        now=NOW,
+        fields={
+            'wechat': ['zhangsan_wx'],
+            'qq': ['12345'],
+            'email': ['zhangsan@example.com'],
+            'phone': ['13800000000'],
+        },
+    )
+
+    person = repo.get_person(result.person_id)
+    assert person is not None
+    assert person.fields == {
+        'wechat': ['zhangsan_wx'],
+        'qq': ['12345'],
+        'email': ['zhangsan@example.com'],
+        'phone': ['13800000000'],
+    }
+    assert len(repo.list_people('zhangsan_wx')) == 1
+
+
+def test_空白联系方式不会覆盖已有(repo: SqliteRepo) -> None:
+    first = record.confirm(
+        repo,
+        record.record(repo, '和张三吃饭', NOW).capture_id,
+        now=NOW,
+        fields={'wechat': ['wx1']},
+    )
+    record.confirm(
+        repo,
+        record.record(repo, '昨天和张三吃饭', NOW).capture_id,
+        now=NOW,
+    )
+
+    person = repo.get_person(first.person_id)
+    assert person is not None
+    assert person.fields == {'wechat': ['wx1']}
+
+
+def test_不写句子也能入库(repo: SqliteRepo) -> None:
+    result = record.manual(
+        repo,
+        now=NOW,
+        name='张三',
+        company='字节',
+        role='后端',
+        fields={'wechat': ['wx1']},
+    )
+
+    person = repo.get_person(result.person_id)
+    assert person is not None
+    assert person.companies == {date(2026, 10, 22): '字节'}
+    assert person.fields == {'wechat': ['wx1']}
+
+    interactions = repo.list_interactions(result.person_id)
+    assert interactions[0].summary == (
+        '用户输入了：姓名：张三，日期：2026-10-22，公司：字节，职位：后端，微信：wx1'
+    )
+
+
+def test_手动入库必须有姓名(repo: SqliteRepo) -> None:
+    with pytest.raises(MissingName):
+        record.manual(repo, now=NOW, name='   ')
+
+    assert repo.export_all()['interaction'] == []
+
+
+def test_再次添加联系方式会追加并去重(repo: SqliteRepo) -> None:
+    first = record.confirm(
+        repo,
+        record.record(repo, '和张三吃饭', NOW).capture_id,
+        now=NOW,
+        fields={'wechat': ['wx1']},
+    )
+    record.confirm(
+        repo,
+        record.record(repo, '昨天和张三吃饭', NOW).capture_id,
+        now=NOW,
+        fields={'wechat': ['wx2', 'wx1']},
+    )
+
+    person = repo.get_person(first.person_id)
+    assert person is not None
+    assert person.fields == {'wechat': ['wx1', 'wx2']}
+
+
 def test_确认不存在的草稿会报错(repo: SqliteRepo) -> None:
     with pytest.raises(CaptureNotFound):
         record.confirm(repo, 999, now=NOW)

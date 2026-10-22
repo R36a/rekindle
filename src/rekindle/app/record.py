@@ -1,10 +1,12 @@
-﻿'''记录用例：一句话 → 草稿 capture → 用户确认 → person / interaction。
+'''记录用例：一句话 → 草稿 capture → 用户确认 → person / interaction。
 
-两条硬规则：
-1. 未确认不产生 interaction（P2「容错优先于全自动」）；
-2. 同一 capture 只能确认一次（不变量 I2，数据库唯一索引兜底）。
+支持两种入口：
+1. 有原话：record() 生成草稿，confirm() 确认入库；
+2. 没有原话：manual() 直接用字段入库（姓名必填，日期默认入库当天）。
 
-离线抽取时会把「已导入人脉的姓氏」一起喂给规则，罕见姓（如「第五」）也能识别。
+两条硬规则不变：
+- 未确认不产生 interaction；
+- 同一 capture 只能确认一次（数据库唯一索引兜底）。
 '''
 
 from __future__ import annotations
@@ -20,12 +22,15 @@ from rekindle.domain.errors import (
     MissingName,
     PersonNotFound,
 )
+from rekindle.domain.fields import FIELD_LABELS
 from rekindle.domain.models import (
     CaptureStatus,
     ExtractedFields,
     Interaction,
     Person,
 )
+
+MANUAL_PREFIX = '用户输入了：'
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,63 @@ def record(repo: RecordPort, text: str, now: datetime) -> RecordedCapture:
     return RecordedCapture(capture_id=capture_id, parsed=parsed)
 
 
+def manual(
+    repo: RecordPort,
+    *,
+    now: datetime,
+    name: str,
+    company: str | None = None,
+    role: str | None = None,
+    fields: dict[str, list[str]] | None = None,
+    occurred_on: date | None = None,
+) -> ConfirmResult:
+    '''没有原话时的入库：字段直接写库，记录文本自动生成。
+
+    姓名必填；日期默认「入库当天」，也可以在表单里改。
+    '''
+    display_name = name.strip()
+    if not display_name:
+        raise MissingName('缺少姓名：姓名是必填字段')
+
+    resolved_company = (company or '').strip() or None
+    resolved_role = (role or '').strip() or None
+    extra_fields = _normalize_fields(fields)
+    occurred_at = datetime.combine(occurred_on or now.date(), time.min)
+    summary = _manual_summary(
+        display_name,
+        occurred_at.date(),
+        resolved_company,
+        resolved_role,
+        extra_fields,
+    )[:500]
+
+    with repo.transaction():
+        person_id, person_name, created_new = _upsert_person(
+            repo,
+            display_name=display_name,
+            company=resolved_company,
+            role=resolved_role,
+            fields=extra_fields,
+            occurred_at=occurred_at,
+        )
+        interaction_id = repo.add_interaction(
+            Interaction(
+                person_id=person_id,
+                capture_id=None,
+                occurred_at=occurred_at,
+                summary=summary,
+                created_at=now,
+            )
+        )
+
+    return ConfirmResult(
+        person_id=person_id,
+        person_name=person_name,
+        created_new=created_new,
+        interaction_id=interaction_id,
+    )
+
+
 def confirm(
     repo: RecordPort,
     capture_id: int,
@@ -64,6 +126,7 @@ def confirm(
     name: str | None = None,
     company: str | None = None,
     role: str | None = None,
+    fields: dict[str, list[str]] | None = None,
     occurred_on: date | None = None,
     create_new: bool = False,
 ) -> ConfirmResult:
@@ -85,51 +148,32 @@ def confirm(
 
     resolved_company = company if company is not None else parsed.company
     resolved_role = role if role is not None else parsed.role
+    extra_fields = _normalize_fields(fields)
     occurred_at = datetime.combine(occurred_on or parsed.occurred_at or now.date(), time.min)
-
-    # 消歧只做两档：别名精确、姓名精确。宁可多建，不可错并。
-    existing = None if create_new else _match_person(repo, display_name)
+    summary = capture.raw_text.strip() or _manual_summary(
+        display_name,
+        occurred_at.date(),
+        resolved_company,
+        resolved_role,
+        extra_fields,
+    )
 
     with repo.transaction():
-        if existing is None:
-            companies = (
-                {occurred_at.date(): resolved_company} if resolved_company else {}
-            )
-            person_id = repo.add_person(
-                Person(
-                    display_name=display_name,
-                    companies=companies,
-                    role=resolved_role,
-                    last_contact_at=occurred_at,
-                )
-            )
-            created_new = True
-            person_name = display_name
-        else:
-            if existing.id is None:
-                raise PersonNotFound(-1)
-            person_id = existing.id
-            companies = dict(existing.companies)
-            if resolved_company:
-                companies[occurred_at.date()] = resolved_company
-            repo.update_person(
-                existing.model_copy(
-                    update={
-                        'companies': companies,
-                        'role': resolved_role or existing.role,
-                        'last_contact_at': occurred_at,
-                    }
-                )
-            )
-            created_new = False
-            person_name = existing.display_name
-
+        person_id, person_name, created_new = _upsert_person(
+            repo,
+            display_name=display_name,
+            company=resolved_company,
+            role=resolved_role,
+            fields=extra_fields,
+            occurred_at=occurred_at,
+            create_new=create_new,
+        )
         interaction_id = repo.add_interaction(
             Interaction(
                 person_id=person_id,
                 capture_id=capture_id,
                 occurred_at=occurred_at,
-                summary=capture.raw_text[:500],
+                summary=summary[:500],
                 created_at=now,
             )
         )
@@ -141,6 +185,92 @@ def confirm(
         created_new=created_new,
         interaction_id=interaction_id,
     )
+
+
+def _normalize_fields(
+    fields: dict[str, list[str]] | None,
+) -> dict[str, list[str]]:
+    '''去掉空值、去重，保持输入顺序。'''
+    normalized: dict[str, list[str]] = {}
+    for key, values in (fields or {}).items():
+        cleaned: list[str] = []
+        for value in values:
+            text = value.strip()
+            if text and text not in cleaned:
+                cleaned.append(text)
+        if cleaned:
+            normalized[key] = cleaned
+    return normalized
+
+
+def _upsert_person(
+    repo: RecordPort,
+    *,
+    display_name: str,
+    company: str | None,
+    role: str | None,
+    fields: dict[str, list[str]],
+    occurred_at: datetime,
+    create_new: bool = False,
+) -> tuple[int, str, bool]:
+    '''新建或合并一个人；调用方负责事务。'''
+    existing = None if create_new else _match_person(repo, display_name)
+
+    if existing is None:
+        companies = {occurred_at.date(): company} if company else {}
+        person_id = repo.add_person(
+            Person(
+                display_name=display_name,
+                companies=companies,
+                fields=fields,
+                role=role,
+                last_contact_at=occurred_at,
+            )
+        )
+        return person_id, display_name, True
+
+    if existing.id is None:
+        raise PersonNotFound(-1)
+    companies = dict(existing.companies)
+    if company:
+        companies[occurred_at.date()] = company
+    merged_fields = {key: list(values) for key, values in existing.fields.items()}
+    for key, values in fields.items():
+        merged = merged_fields.setdefault(key, [])
+        for value in values:
+            if value not in merged:
+                merged.append(value)
+    repo.update_person(
+        existing.model_copy(
+            update={
+                'companies': companies,
+                'fields': merged_fields,
+                'role': role or existing.role,
+                'last_contact_at': occurred_at,
+            }
+        )
+    )
+    return existing.id, existing.display_name, False
+
+
+def _manual_summary(
+    name: str,
+    day: date,
+    company: str | None,
+    role: str | None,
+    fields: dict[str, list[str]],
+) -> str:
+    '''没有原话时，把填过的字段写成一句可读的记录文本。'''
+    parts = [f'姓名：{name}', f'日期：{day.isoformat()}']
+    if company:
+        parts.append(f'公司：{company}')
+    if role:
+        parts.append(f'职位：{role}')
+    for key, label in FIELD_LABELS.items():
+        values = fields.get(key)
+        if values:
+            parts.append(f'{label}：' + '、'.join(values))
+    return MANUAL_PREFIX + '，'.join(parts)
 
 
 def _match_person(repo: RecordPort, name: str) -> Person | None:

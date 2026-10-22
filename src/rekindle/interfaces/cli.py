@@ -15,10 +15,13 @@ from pathlib import Path
 
 from rekindle import __version__
 from rekindle.app import backup, queries, record
+from rekindle.app import edit as edit_uc
 from rekindle.app.queries import PersonDetail
 from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError
+from rekindle.domain.fields import FIELD_LABELS
 from rekindle.domain.models import ExtractedFields, Person
+from rekindle.infra.snapshot import create_snapshot
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 
@@ -55,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--name', help='姓名（抽不到时必填）')
     p.add_argument('--company')
     p.add_argument('--role')
+    p.add_argument('--wechat', action='append', help='微信号（可重复，追加不覆盖）')
+    p.add_argument('--qq', action='append', help='QQ 号（可重复，追加不覆盖）')
+    p.add_argument('--email', action='append', help='邮箱（可重复，追加不覆盖）')
+    p.add_argument('--phone', action='append', help='电话（可重复，追加不覆盖）')
     p.add_argument(
         '--when',
         type=_parse_date,
@@ -63,12 +70,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument('--new', action='store_true', dest='create_new', help='即使同名也新建')
 
+    p = sub.add_parser('add', parents=[common], help='不写句子，直接按字段入库')
+    p.add_argument('--name', required=True, help='姓名（必填）')
+    p.add_argument('--company')
+    p.add_argument('--role')
+    p.add_argument('--wechat', action='append', help='微信号（可重复，追加不覆盖）')
+    p.add_argument('--qq', action='append', help='QQ 号（可重复，追加不覆盖）')
+    p.add_argument('--email', action='append', help='邮箱（可重复，追加不覆盖）')
+    p.add_argument('--phone', action='append', help='电话（可重复，追加不覆盖）')
+    p.add_argument(
+        '--when',
+        type=_parse_date,
+        dest='occurred_on',
+        help='入库日期：YYYY-MM-DD 或 今天/昨天/前天/上周',
+    )
+
     p = sub.add_parser('list', parents=[common], help='列出联系人（最近联系优先）')
     p.add_argument('-q', '--query', default='', help='按姓名/公司/职位/备注/别名搜索')
     p.add_argument('-n', '--limit', type=int, default=20)
 
     p = sub.add_parser('show', parents=[common], help='查看一个人')
     p.add_argument('person_id', type=int)
+
+    p = sub.add_parser('archive', parents=[common], help='归档一个人（不删数据）')
+    p.add_argument('person_id', type=int)
+
+    p = sub.add_parser('snapshot', parents=[common], help='立即备份数据库')
 
     p = sub.add_parser('alias', parents=[common], help='给某个人记一个称呼')
     p.add_argument('person_id', type=int)
@@ -116,11 +143,26 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
             name=args.name,
             company=args.company,
             role=args.role,
+            fields=_contact_fields(args),
             occurred_on=args.occurred_on,
             create_new=args.create_new,
         )
         action = '新建' if result.created_new else '合并到已有'
         print(f'已确认 → {result.person_name}（{action}，#{result.person_id}）')
+        return 0
+
+    if args.command == 'add':
+        result = record.manual(
+            repo,
+            now=now,
+            name=args.name,
+            company=args.company,
+            role=args.role,
+            fields=_contact_fields(args),
+            occurred_on=args.occurred_on,
+        )
+        action = '新建' if result.created_new else '合并到已有'
+        print(f'已入库 → {result.person_name}（{action}，#{result.person_id}）')
         return 0
 
     if args.command == 'list':
@@ -134,6 +176,16 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
 
     if args.command == 'show':
         _print_detail(queries.person_detail(repo, args.person_id))
+        return 0
+
+    if args.command == 'archive':
+        edit_uc.archive_person(repo, args.person_id)
+        print(f'已归档 person #{args.person_id}')
+        return 0
+
+    if args.command == 'snapshot':
+        path = create_snapshot(repo.path)
+        print(f'已备份 → {path.resolve()}')
         return 0
 
     if args.command == 'alias':
@@ -158,6 +210,16 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
 
     print(f'未知命令：{args.command}', file=sys.stderr)
     return 2
+
+
+def _contact_fields(args: argparse.Namespace) -> dict[str, list[str]]:
+    raw = {
+        'wechat': args.wechat or [],
+        'qq': args.qq or [],
+        'email': args.email or [],
+        'phone': args.phone or [],
+    }
+    return {key: values for key, values in raw.items() if values}
 
 
 def _print_fields(parsed: ExtractedFields) -> None:
@@ -187,6 +249,14 @@ def _print_detail(detail: PersonDetail) -> None:
         if person.last_contact_at
         else '最近联系：-'
     )
+
+    if person.fields:
+        print()
+        print('联系方式：')
+        for key, label in FIELD_LABELS.items():
+            values = person.fields.get(key)
+            if values:
+                print(f'  {label}：' + '、'.join(values))
 
     if person.companies:
         print()

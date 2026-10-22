@@ -16,7 +16,9 @@ NOW = datetime(2026, 10, 22, 9, 0)
 
 def test_导出导入往返一致(repo: SqliteRepo, tmp_path: Path) -> None:
     saved = record.record(repo, '上周和张三在字节工作', NOW)
-    result = record.confirm(repo, saved.capture_id, now=NOW)
+    result = record.confirm(
+        repo, saved.capture_id, now=NOW, fields={'wechat': ['wx1']}
+    )
     repo.add_alias(result.person_id, '张总')
 
     out = backup.export_to(repo, tmp_path / 'backup.json', NOW)

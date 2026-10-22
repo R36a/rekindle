@@ -68,6 +68,7 @@ class Person(_StrictModel):
     pinyin: str = ''
     initials: str = ''
     companies: dict[date, str] = Field(default_factory=dict)  # 日期 -> 公司
+    fields: dict[str, list[str]] = Field(default_factory=dict)  # 字段 key -> 多个值
     role: str | None = None
     notes: str | None = None
     last_contact_at: datetime | None = None

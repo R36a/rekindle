@@ -10,16 +10,28 @@ from typing import Any
 import pytest
 
 tk = pytest.importorskip('tkinter')
-RekindleApp = pytest.importorskip('rekindle.interfaces.gui').RekindleApp
+gui_module = pytest.importorskip('rekindle.interfaces.gui')
+RekindleApp = gui_module.RekindleApp
 
 
 @pytest.fixture()
-def app(tmp_path: Path) -> Iterator[Any]:
+def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     try:
         probe = tk.Tk()
     except tk.TclError:
         pytest.skip('无图形环境')
     probe.destroy()
+
+    # 测试里不弹模态框，否则会卡住整个测试会话。
+    monkeypatch.setattr(
+        gui_module.messagebox, 'showerror', lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        gui_module.messagebox, 'showinfo', lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        gui_module.messagebox, 'askyesno', lambda *args, **kwargs: True
+    )
 
     instance = RekindleApp(tmp_path / 'gui.db')
     yield instance
@@ -113,3 +125,58 @@ def test_列表显示最近公司(app: Any) -> None:
     rows = app._people_tree.get_children()
     assert len(rows) == 1
     assert app._people_tree.item(rows[0], 'values')[2] == '腾讯'
+
+
+def test_联系方式随确认保存(app: Any) -> None:
+    app._text.insert('1.0', '和张三吃饭')
+    app.on_extract()
+    app._field_vars['wechat'].set('wx123')
+    app._field_vars['phone'].set('13800000000')
+
+    app.on_confirm()
+
+    people = app._repo.list_people()
+    assert people[0].fields == {'wechat': ['wx123'], 'phone': ['13800000000']}
+
+
+def test_不写句子也能确认(app: Any) -> None:
+    app._text.delete('1.0', 'end')
+    app._name.set('张三')
+    app._company.set('字节')
+    app._field_vars['wechat'].set('wx1')
+
+    app.on_confirm()
+
+    people = app._repo.list_people()
+    assert people[0].display_name == '张三'
+    assert people[0].fields == {'wechat': ['wx1']}
+    interactions = app._repo.list_interactions(people[0].id or 0)
+    assert interactions[0].summary.startswith('用户输入了：姓名：张三')
+
+
+def test_一个输入框可以填多个值(app: Any) -> None:
+    app._text.insert('1.0', '和张三吃饭')
+    app.on_extract()
+    app._field_vars['wechat'].set('wx1，wx2')
+
+    app.on_confirm()
+
+    people = app._repo.list_people()
+    assert people[0].fields == {'wechat': ['wx1', 'wx2']}
+
+
+def test_编辑窗口能改资料(app: Any) -> None:
+    app._text.insert('1.0', '和张三吃饭')
+    app.on_extract()
+    app.on_confirm()
+    person_id = app._repo.list_people()[0].id or 0
+
+    editor_module = pytest.importorskip('rekindle.interfaces.editor')
+    editor = editor_module.PersonEditor(app, app._repo, person_id, lambda: None)
+    editor._name_var.set('张三丰')
+    editor._save()
+
+    people = app._repo.list_people()
+    assert people[0].display_name == '张三丰'
+    snapshots = app._repo.path.parent / 'snapshots'
+    assert list(snapshots.glob('rekindle-*.db'))

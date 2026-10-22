@@ -16,8 +16,11 @@ from tkinter import messagebox, ttk
 
 from rekindle.app import queries, record
 from rekindle.domain.errors import RekindleError
+from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
+from rekindle.interfaces.editor import PersonEditor
+from rekindle.interfaces.inputs import split_values
 
 _COLUMNS_PEOPLE = ('id', '姓名', '公司', '职位', '最近联系')
 
@@ -26,15 +29,18 @@ class RekindleApp(tk.Tk):
     def __init__(self, db_path: Path) -> None:
         super().__init__()
         self.title('rekindle — 本地人脉（离线）')
-        self.geometry('820x600')
-        self.minsize(700, 480)
+        self.geometry('820x700')
+        self.minsize(700, 560)
         self._repo = SqliteRepo(db_path)
         self._capture_id: int | None = None
 
         self._name = tk.StringVar()
         self._company = tk.StringVar()
         self._role = tk.StringVar()
-        self._when = tk.StringVar()
+        self._when = tk.StringVar(value=datetime.now().date().isoformat())
+        self._field_vars: dict[str, tk.StringVar] = {
+            spec.key: tk.StringVar() for spec in DEFAULT_FIELDS
+        }
         self._query = tk.StringVar()
         self._status = tk.StringVar(value=f'数据库：{db_path}')
 
@@ -65,7 +71,7 @@ class RekindleApp(tk.Tk):
             ('姓名', self._name),
             ('公司', self._company),
             ('职位', self._role),
-            ('日期 YYYY-MM-DD', self._when),
+            ('日期 ', self._when),
         )
         for index, (label, var) in enumerate(fields):
             grid_row, grid_col = divmod(index, 2)
@@ -78,8 +84,23 @@ class RekindleApp(tk.Tk):
         preview.columnconfigure(1, weight=1)
         preview.columnconfigure(3, weight=1)
 
+        contact = ttk.Frame(preview)
+        contact.grid(row=2, column=0, columnspan=4, sticky='we', padx=4, pady=(2, 0))
+        for index, spec in enumerate(DEFAULT_FIELDS):
+            grid_row, grid_col = divmod(index, 2)
+            ttk.Label(contact, text=spec.label).grid(
+                row=grid_row, column=grid_col * 2, sticky='e', padx=4, pady=3
+            )
+            ttk.Entry(
+                contact, textvariable=self._field_vars[spec.key], width=26
+            ).grid(
+                row=grid_row, column=grid_col * 2 + 1, sticky='we', padx=4, pady=3
+            )
+        contact.columnconfigure(1, weight=1)
+        contact.columnconfigure(3, weight=1)
+
         quick = ttk.Frame(preview)
-        quick.grid(row=2, column=0, columnspan=4, sticky='w', padx=4, pady=(0, 2))
+        quick.grid(row=3, column=0, columnspan=4, sticky='w', padx=4, pady=(0, 2))
         ttk.Label(quick, text='日期快捷：').pack(side='left')
         for label, days in (('今天', 0), ('昨天', -1), ('前天', -2), ('上周', -7)):
             ttk.Button(
@@ -90,7 +111,7 @@ class RekindleApp(tk.Tk):
             ).pack(side='left', padx=2)
 
         actions = ttk.Frame(preview)
-        actions.grid(row=3, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
+        actions.grid(row=4, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
         ttk.Button(actions, text='确认入库', command=self.on_confirm).pack(side='left')
         ttk.Button(actions, text='丢弃草稿', command=self.on_discard).pack(
             side='left', padx=6
@@ -124,6 +145,9 @@ class RekindleApp(tk.Tk):
 
         bottom = ttk.Frame(self)
         bottom.pack(fill='x', padx=8, pady=(0, 8))
+        ttk.Button(bottom, text='编辑选中', command=self.open_editor).pack(
+            side='left', padx=6
+        )
         ttk.Button(bottom, text='刷新', command=self.refresh).pack(side='left')
         ttk.Label(bottom, textvariable=self._status).pack(side='right')
 
@@ -138,7 +162,7 @@ class RekindleApp(tk.Tk):
     def on_extract(self) -> None:
         text = self._text.get('1.0', 'end').strip()
         if not text:
-            self._set_status('先写一句话')
+            self._set_status('可以不写句子：直接填姓名等字段后点「确认入库」')
             return
         # 重复点「识别」时先丢掉上一份草稿，避免库里堆积用不上的 draft。
         if self._capture_id is not None:
@@ -156,11 +180,18 @@ class RekindleApp(tk.Tk):
         self._company.set(parsed.company or '')
         self._role.set(parsed.role or '')
         self._when.set(parsed.occurred_at.isoformat() if parsed.occurred_at else '')
+        for var in self._field_vars.values():
+            var.set('')
         self._set_status(f'草稿 capture #{saved.capture_id}：核对后点「确认入库」')
 
     def on_confirm(self) -> None:
-        if self._capture_id is None:
-            self._set_status('先识别一句话，再确认')
+        text = self._text.get('1.0', 'end').strip()
+        # 有原话但还没识别：自动识别一次，省一次点击。
+        if self._capture_id is None and text:
+            self.on_extract()
+
+        if self._capture_id is None and not self._name.get().strip():
+            self._set_status('姓名是必填字段：写一句原话，或直接填姓名')
             return
 
         when_text = self._when.get().strip()
@@ -172,23 +203,45 @@ class RekindleApp(tk.Tk):
             )
             return
 
+        fields = {
+            key: split_values(var.get())
+            for key, var in self._field_vars.items()
+            if var.get().strip()
+        }
+        capture_id = self._capture_id
+        was_manual = capture_id is None
         try:
-            result = record.confirm(
-                self._repo,
-                self._capture_id,
-                now=datetime.now(),
-                name=self._name.get().strip() or None,
-                company=self._company.get().strip() or None,
-                role=self._role.get().strip() or None,
-                occurred_on=occurred_on,
-            )
+            if capture_id is None:
+                result = record.manual(
+                    self._repo,
+                    now=datetime.now(),
+                    name=self._name.get(),
+                    company=self._company.get(),
+                    role=self._role.get(),
+                    fields=fields,
+                    occurred_on=occurred_on,
+                )
+            else:
+                result = record.confirm(
+                    self._repo,
+                    capture_id,
+                    now=datetime.now(),
+                    name=self._name.get().strip() or None,
+                    company=self._company.get().strip() or None,
+                    role=self._role.get().strip() or None,
+                    fields=fields,
+                    occurred_on=occurred_on,
+                )
         except RekindleError as exc:
             messagebox.showerror('确认失败', str(exc), parent=self)
             return
 
         self._clear_preview()
         self.refresh()
-        self._set_status(f'已入库：{result.person_name}（#{result.person_id}）')
+        mode = '手动填写' if was_manual else '来自草稿'
+        self._set_status(
+            f'已入库：{result.person_name}（#{result.person_id}，{mode}）'
+        )
 
     def on_discard(self) -> None:
         if self._capture_id is None:
@@ -249,31 +302,21 @@ class RekindleApp(tk.Tk):
         self._set_status(f'{len(people)} 人{suffix}')
 
     def on_person_detail(self, event: tk.Event) -> None:
+        self.open_editor()
+
+    def open_editor(self) -> None:
         selection = self._people_tree.selection()
         if not selection:
+            self._set_status('先选中一个人')
             return
-        detail = queries.person_detail(self._repo, int(selection[0]))
-        person = detail.person
-        lines = [
-            f'{person.display_name}'
-            f'（{person.current_company or "-"} / {person.role or "-"}）',
-            f'最近联系：{person.last_contact_at.date() if person.last_contact_at else "-"}',
-        ]
-        if person.companies:
-            lines += ['', '公司历史：']
-            lines += [
-                f'  {on_date}  {person.companies[on_date]}'
-                for on_date in sorted(person.companies, reverse=True)
-            ]
-        lines += ['', '交往记录：']
-        if detail.interactions:
-            lines += [
-                f'  {item.occurred_at.date()}  {item.summary}'
-                for item in detail.interactions
-            ]
-        else:
-            lines.append('  （无）')
-        messagebox.showinfo('人物详情', '\n'.join(lines), parent=self)
+        try:
+            PersonEditor(self, self._repo, int(selection[0]), self._after_edit)
+        except (RekindleError, ValueError) as exc:
+            messagebox.showerror('打开失败', str(exc), parent=self)
+
+    def _after_edit(self) -> None:
+        self.refresh()
+        self._set_status('已保存')
 
     # ---------- 内部 ----------
 
@@ -287,7 +330,10 @@ class RekindleApp(tk.Tk):
     def _clear_preview(self) -> None:
         self._capture_id = None
         self._text.delete('1.0', 'end')
-        for var in (self._name, self._company, self._role, self._when):
+        for var in (self._name, self._company, self._role):
+            var.set('')
+        self._when.set(datetime.now().date().isoformat())
+        for var in self._field_vars.values():
             var.set('')
 
     def _on_close(self) -> None:

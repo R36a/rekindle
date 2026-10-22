@@ -110,3 +110,60 @@ def test_when支持相对日期(tmp_path: Path, capsys: pytest.CaptureFixture[st
         people = repo.list_people()
     assert people[0].last_contact_at is not None
     assert people[0].last_contact_at.date() == date.today() - timedelta(days=1)
+
+
+def test_联系方式可以通过命令行写入(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / 'cli.db')
+    main(['remember', '和张三吃饭', '--db', db])
+    assert main(
+        ['confirm', '1', '--wechat', 'wx123', '--email', 'a@b.com', '--db', db]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(['show', '1', '--db', db]) == 0
+    out = capsys.readouterr().out
+    assert '微信：wx123' in out
+    assert '邮箱：a@b.com' in out
+
+
+def test_add_不写句子直接入库(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / 'cli.db')
+    assert main(
+        ['add', '--name', '张三', '--company', '字节', '--wechat', 'wx123', '--db', db]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(['show', '1', '--db', db]) == 0
+    out = capsys.readouterr().out
+    assert '微信：wx123' in out
+    assert '用户输入了：姓名：张三' in out
+
+
+def test_联系方式可以重复添加(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / 'cli.db')
+    main(['add', '--name', '张三', '--wechat', 'wx1', '--db', db])
+    main(['add', '--name', '张三', '--wechat', 'wx2', '--db', db])
+    main(['add', '--name', '张三', '--wechat', 'wx3', '--wechat', 'wx4', '--db', db])
+    capsys.readouterr()
+
+    assert main(['show', '1', '--db', db]) == 0
+    assert '微信：wx1、wx2、wx3、wx4' in capsys.readouterr().out
+
+
+def test_归档和快照(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db = str(tmp_path / 'cli.db')
+    main(['add', '--name', '张三', '--db', db])
+
+    assert main(['archive', '1', '--db', db]) == 0
+    capsys.readouterr()
+    assert main(['list', '--db', db]) == 0
+    assert '没有匹配' in capsys.readouterr().out
+
+    assert main(['snapshot', '--db', db]) == 0
+    assert '已备份' in capsys.readouterr().out
