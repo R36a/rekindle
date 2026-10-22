@@ -9,7 +9,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import tkinter as tk
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -77,8 +78,19 @@ class RekindleApp(tk.Tk):
         preview.columnconfigure(1, weight=1)
         preview.columnconfigure(3, weight=1)
 
+        quick = ttk.Frame(preview)
+        quick.grid(row=2, column=0, columnspan=4, sticky='w', padx=4, pady=(0, 2))
+        ttk.Label(quick, text='日期快捷：').pack(side='left')
+        for label, days in (('今天', 0), ('昨天', -1), ('前天', -2), ('上周', -7)):
+            ttk.Button(
+                quick,
+                text=label,
+                width=6,
+                command=partial(self._set_relative_date, days),
+            ).pack(side='left', padx=2)
+
         actions = ttk.Frame(preview)
-        actions.grid(row=2, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
+        actions.grid(row=3, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
         ttk.Button(actions, text='确认入库', command=self.on_confirm).pack(side='left')
         ttk.Button(actions, text='丢弃草稿', command=self.on_discard).pack(
             side='left', padx=6
@@ -228,7 +240,7 @@ class RekindleApp(tk.Tk):
                 values=(
                     person.id,
                     person.display_name,
-                    person.company or '',
+                    person.current_company or '',
                     person.role or '',
                     last,
                 ),
@@ -244,11 +256,16 @@ class RekindleApp(tk.Tk):
         person = detail.person
         lines = [
             f'{person.display_name}'
-            f'（{person.company or "-"} / {person.role or "-"}）',
+            f'（{person.current_company or "-"} / {person.role or "-"}）',
             f'最近联系：{person.last_contact_at.date() if person.last_contact_at else "-"}',
-            '',
-            '交往记录：',
         ]
+        if person.companies:
+            lines += ['', '公司历史：']
+            lines += [
+                f'  {on_date}  {person.companies[on_date]}'
+                for on_date in sorted(person.companies, reverse=True)
+            ]
+        lines += ['', '交往记录：']
         if detail.interactions:
             lines += [
                 f'  {item.occurred_at.date()}  {item.summary}'
@@ -259,6 +276,10 @@ class RekindleApp(tk.Tk):
         messagebox.showinfo('人物详情', '\n'.join(lines), parent=self)
 
     # ---------- 内部 ----------
+
+    def _set_relative_date(self, days: int) -> None:
+        '''快捷按钮：按相对今天的天数填日期。'''
+        self._when.set((datetime.now().date() + timedelta(days=days)).isoformat())
 
     def _set_status(self, text: str) -> None:
         self._status.set(text)

@@ -29,7 +29,8 @@ def test_确认后写入人脉与最近联系时间(repo: SqliteRepo) -> None:
     person = repo.get_person(result.person_id)
     assert person is not None
     assert person.display_name == '张三'
-    assert person.company == '字节'
+    assert person.companies == {date(2026, 10, 15): '字节'}
+    assert person.current_company == '字节'
     assert person.role == '后端'
     assert person.last_contact_at == datetime(2026, 10, 15)
 
@@ -96,7 +97,7 @@ def test_确认时可以覆盖抽取字段(repo: SqliteRepo) -> None:
     person = repo.get_person(result.person_id)
     assert person is not None
     assert person.display_name == '李四'
-    assert person.company == '腾讯'
+    assert person.companies == {date(2026, 10, 1): '腾讯'}
     assert person.last_contact_at == datetime(2026, 10, 1)
 
 
@@ -110,6 +111,35 @@ def test_已导入人脉的罕见姓也能识别(repo: SqliteRepo) -> None:
     result = record.confirm(repo, saved.capture_id, now=NOW)
     assert result.created_new is False
     assert len(repo.export_all()['person']) == 1
+
+
+def test_日期字段默认今天(repo: SqliteRepo) -> None:
+    saved = record.record(repo, '和张三吃饭', NOW)
+
+    assert saved.parsed.occurred_at == date(2026, 10, 22)
+
+    result = record.confirm(repo, saved.capture_id, now=NOW)
+    person = repo.get_person(result.person_id)
+    assert person is not None
+    assert person.last_contact_at == datetime(2026, 10, 22)
+
+
+def test_同一人不同时间的两家公司都会保留(repo: SqliteRepo) -> None:
+    first = record.confirm(
+        repo, record.record(repo, '上周和张三在字节工作', NOW).capture_id, now=NOW
+    )
+    second = record.confirm(
+        repo, record.record(repo, '今天和张三在腾讯工作', NOW).capture_id, now=NOW
+    )
+
+    assert second.person_id == first.person_id
+    person = repo.get_person(first.person_id)
+    assert person is not None
+    assert person.companies == {
+        date(2026, 10, 15): '字节',
+        date(2026, 10, 22): '腾讯',
+    }
+    assert person.current_company == '腾讯'
 
 
 def test_确认不存在的草稿会报错(repo: SqliteRepo) -> None:

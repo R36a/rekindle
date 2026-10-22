@@ -16,6 +16,7 @@ from pathlib import Path
 from rekindle import __version__
 from rekindle.app import backup, queries, record
 from rekindle.app.queries import PersonDetail
+from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError
 from rekindle.domain.models import ExtractedFields, Person
 from rekindle.infra.sqlite_repo import SqliteRepo
@@ -23,10 +24,12 @@ from rekindle.interfaces.config import default_db_path
 
 
 def _parse_date(value: str) -> date:
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError('日期格式应为 YYYY-MM-DD') from exc
+    parsed = parse_date_input(value, date.today())
+    if parsed is None:
+        raise argparse.ArgumentTypeError(
+            '日期格式应为 YYYY-MM-DD，或 今天/昨天/前天/上周'
+        )
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,7 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--name', help='姓名（抽不到时必填）')
     p.add_argument('--company')
     p.add_argument('--role')
-    p.add_argument('--when', type=_parse_date, dest='occurred_on', help='联系日期 YYYY-MM-DD')
+    p.add_argument(
+        '--when',
+        type=_parse_date,
+        dest='occurred_on',
+        help='联系日期：YYYY-MM-DD 或 今天/昨天/前天/上周',
+    )
     p.add_argument('--new', action='store_true', dest='create_new', help='即使同名也新建')
 
     p = sub.add_parser('list', parents=[common], help='列出联系人（最近联系优先）')
@@ -161,7 +169,7 @@ def _print_fields(parsed: ExtractedFields) -> None:
 
 def _print_person_line(person: Person) -> None:
     parts = [f'#{person.id or 0:<3}', person.display_name]
-    extra = ' / '.join(item for item in (person.company, person.role) if item)
+    extra = ' / '.join(item for item in (person.current_company, person.role) if item)
     if extra:
         parts.append(extra)
     if person.last_contact_at is not None:
@@ -171,7 +179,7 @@ def _print_person_line(person: Person) -> None:
 
 def _print_detail(detail: PersonDetail) -> None:
     person = detail.person
-    extra = ' / '.join(item for item in (person.company, person.role) if item)
+    extra = ' / '.join(item for item in (person.current_company, person.role) if item)
     title = f'#{person.id} {person.display_name}'
     print(f'{title}（{extra}）' if extra else title)
     print(
@@ -180,7 +188,14 @@ def _print_detail(detail: PersonDetail) -> None:
         else '最近联系：-'
     )
 
-    print('\n交往记录：')
+    if person.companies:
+        print()
+        print('公司历史：')
+        for on_date in sorted(person.companies, reverse=True):
+            print(f'  {on_date}  {person.companies[on_date]}')
+
+    print()
+    print('交往记录：')
     if not detail.interactions:
         print('  （无）')
     for item in detail.interactions:

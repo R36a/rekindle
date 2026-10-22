@@ -67,11 +67,18 @@ class Person(_StrictModel):
     display_name: str = Field(min_length=1, max_length=20)
     pinyin: str = ''
     initials: str = ''
-    company: str | None = None
+    companies: dict[date, str] = Field(default_factory=dict)  # 日期 -> 公司
     role: str | None = None
     notes: str | None = None
     last_contact_at: datetime | None = None
     archived: bool = False
+
+    @property
+    def current_company(self) -> str | None:
+        '''最近一次记录的公司（按日期取最大值）。'''
+        if not self.companies:
+            return None
+        return self.companies[max(self.companies)]
 
 
 class Alias(_StrictModel):

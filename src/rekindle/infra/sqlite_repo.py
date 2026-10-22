@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from rekindle.domain.errors import (
@@ -27,7 +27,7 @@ from rekindle.domain.models import (
 )
 from rekindle.domain.normalize import normalize_name
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = (
     '''
@@ -36,13 +36,21 @@ _SCHEMA = (
         display_name    TEXT    NOT NULL,
         pinyin          TEXT    NOT NULL DEFAULT '',
         initials        TEXT    NOT NULL DEFAULT '',
-        company         TEXT,
         role            TEXT,
         notes           TEXT,
         last_contact_at TEXT,
         archived        INTEGER NOT NULL DEFAULT 0
     )
     ''',
+    '''
+    CREATE TABLE person_company (
+        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        on_date   TEXT    NOT NULL,
+        company   TEXT    NOT NULL,
+        PRIMARY KEY (person_id, on_date)
+    )
+    ''',
+    'CREATE INDEX ix_person_company_name ON person_company(company)',
     '''
     CREATE TABLE alias (
         id        INTEGER PRIMARY KEY,
@@ -80,10 +88,18 @@ _SCHEMA = (
 )
 
 # 导出顺序 = 外键的父 → 子；导入按同样顺序插入。
-_TABLES = ('person', 'alias', 'capture', 'interaction')
+_TABLES = ('person', 'alias', 'capture', 'interaction', 'person_company')
 
 # 旧结构（v1）里多出来的表；删表按子 → 父。
-_LEGACY_TABLES = ('todo_person', 'todo', 'interaction', 'capture', 'alias', 'person')
+_LEGACY_TABLES = (
+    'person_company',
+    'todo_person',
+    'todo',
+    'interaction',
+    'capture',
+    'alias',
+    'person',
+)
 
 
 def _dt(value: object) -> datetime | None:
@@ -94,13 +110,13 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _person(row: sqlite3.Row) -> Person:
+def _person(row: sqlite3.Row, companies: dict[date, str]) -> Person:
     return Person(
         id=row['id'],
         display_name=row['display_name'],
         pinyin=row['pinyin'],
         initials=row['initials'],
-        company=row['company'],
+        companies=companies,
         role=row['role'],
         notes=row['notes'],
         last_contact_at=_dt(row['last_contact_at']),
@@ -253,7 +269,7 @@ class SqliteRepo:
             'WHERE a.text_norm = ? AND p.archived = 0 LIMIT 1',
             (normalize_name(text),),
         ).fetchone()
-        return _person(row) if row else None
+        return self._load_person(row) if row else None
 
     def find_person_by_name(self, name: str) -> Person | None:
         row = self._conn.execute(
@@ -261,49 +277,94 @@ class SqliteRepo:
             'ORDER BY id LIMIT 1',
             (name,),
         ).fetchone()
-        return _person(row) if row else None
+        return self._load_person(row) if row else None
 
     def get_person(self, person_id: int) -> Person | None:
         row = self._conn.execute(
             'SELECT * FROM person WHERE id = ?', (person_id,)
         ).fetchone()
-        return _person(row) if row else None
+        return self._load_person(row) if row else None
+
+    def _replace_companies(self, person_id: int, companies: dict[date, str]) -> None:
+        '''整体替换某人的公司历史（数据量小，简单胜过增量）。'''
+        self._conn.execute(
+            'DELETE FROM person_company WHERE person_id = ?', (person_id,)
+        )
+        for on_date, company in companies.items():
+            self._conn.execute(
+                'INSERT INTO person_company (person_id, on_date, company) '
+                'VALUES (?, ?, ?)',
+                (person_id, on_date.isoformat(), company),
+            )
+
+    def _companies_of(self, person_id: int) -> dict[date, str]:
+        rows = self._conn.execute(
+            'SELECT on_date, company FROM person_company WHERE person_id = ? '
+            'ORDER BY on_date',
+            (person_id,),
+        ).fetchall()
+        return {
+            date.fromisoformat(str(row['on_date'])): str(row['company'])
+            for row in rows
+        }
+
+    def _companies_for(self, person_ids: list[int]) -> dict[int, dict[date, str]]:
+        if not person_ids:
+            return {}
+        placeholders = ', '.join('?' for _ in person_ids)
+        rows = self._conn.execute(
+            f'SELECT person_id, on_date, company FROM person_company '
+            f'WHERE person_id IN ({placeholders})',
+            person_ids,
+        ).fetchall()
+        result: dict[int, dict[date, str]] = {}
+        for row in rows:
+            result.setdefault(int(row['person_id']), {})[
+                date.fromisoformat(str(row['on_date']))
+            ] = str(row['company'])
+        return result
+
+    def _load_person(self, row: sqlite3.Row) -> Person:
+        return _person(row, self._companies_of(int(row['id'])))
 
     def add_person(self, person: Person) -> int:
-        cur = self._conn.execute(
-            'INSERT INTO person (display_name, pinyin, initials, company, role, notes, '
-            'last_contact_at, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            (
-                person.display_name,
-                person.pinyin,
-                person.initials,
-                person.company,
-                person.role,
-                person.notes,
-                _iso(person.last_contact_at),
-                int(person.archived),
-            ),
-        )
-        return int(cur.lastrowid or 0)
+        with self._atomic():
+            cur = self._conn.execute(
+                'INSERT INTO person (display_name, pinyin, initials, role, notes, '
+                'last_contact_at, archived) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (
+                    person.display_name,
+                    person.pinyin,
+                    person.initials,
+                    person.role,
+                    person.notes,
+                    _iso(person.last_contact_at),
+                    int(person.archived),
+                ),
+            )
+            person_id = int(cur.lastrowid or 0)
+            self._replace_companies(person_id, person.companies)
+            return person_id
 
     def update_person(self, person: Person) -> None:
         if person.id is None:
             raise ValueError('update_person 需要 person.id')
-        self._conn.execute(
-            'UPDATE person SET display_name = ?, pinyin = ?, initials = ?, company = ?, '
-            'role = ?, notes = ?, last_contact_at = ?, archived = ? WHERE id = ?',
-            (
-                person.display_name,
-                person.pinyin,
-                person.initials,
-                person.company,
-                person.role,
-                person.notes,
-                _iso(person.last_contact_at),
-                int(person.archived),
-                person.id,
-            ),
-        )
+        with self._atomic():
+            self._conn.execute(
+                'UPDATE person SET display_name = ?, pinyin = ?, initials = ?, '
+                'role = ?, notes = ?, last_contact_at = ?, archived = ? WHERE id = ?',
+                (
+                    person.display_name,
+                    person.pinyin,
+                    person.initials,
+                    person.role,
+                    person.notes,
+                    _iso(person.last_contact_at),
+                    int(person.archived),
+                    person.id,
+                ),
+            )
+            self._replace_companies(person.id, person.companies)
 
     def add_alias(self, person_id: int, text: str) -> None:
         # INSERT OR IGNORE + 唯一索引（I4）：重复加同一个称呼不会报错也不会写两条。
@@ -353,7 +414,7 @@ class SqliteRepo:
     # ---------- 查询 ----------
 
     def list_people(self, query: str = '', limit: int = 50) -> list[Person]:
-        '''最近联系优先；搜索覆盖姓名、公司、职位、备注和别名。'''
+        '''最近联系优先；搜索覆盖姓名、公司历史、职位、备注和别名。'''
         base = 'SELECT DISTINCT p.* FROM person p WHERE p.archived = 0 '
         order = (
             'ORDER BY p.last_contact_at IS NULL, p.last_contact_at DESC, p.id DESC '
@@ -366,16 +427,21 @@ class SqliteRepo:
             rows = self._conn.execute(
                 base
                 + 'AND (p.display_name LIKE ? '
-                "OR IFNULL(p.company, '') LIKE ? OR IFNULL(p.role, '') LIKE ? "
+                "OR IFNULL(p.role, '') LIKE ? "
                 "OR IFNULL(p.notes, '') LIKE ? "
                 'OR EXISTS (SELECT 1 FROM alias a WHERE a.person_id = p.id '
-                'AND a.text_norm LIKE ?)) '
+                'AND a.text_norm LIKE ?) '
+                'OR EXISTS (SELECT 1 FROM person_company c '
+                'WHERE c.person_id = p.id AND c.company LIKE ?)) '
                 + order,
-                (like, like, like, like, alias_like, limit),
+                (like, like, like, alias_like, like, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(base + order, (limit,)).fetchall()
-        return [_person(row) for row in rows]
+        companies = self._companies_for([int(row['id']) for row in rows])
+        return [
+            _person(row, companies.get(int(row['id']), {})) for row in rows
+        ]
 
     # ---------- 备份 ----------
 

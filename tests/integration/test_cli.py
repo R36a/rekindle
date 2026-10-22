@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
+from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.cli import main
 
 
@@ -96,3 +98,15 @@ def test_丢弃草稿(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
 def test_空参数打印帮助(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == 0
     assert 'rekindle' in capsys.readouterr().out
+
+
+def test_when支持相对日期(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db = str(tmp_path / 'cli.db')
+    main(['remember', '和张三吃饭', '--db', db])
+    assert main(['confirm', '1', '--when', '昨天', '--db', db]) == 0
+    capsys.readouterr()
+
+    with SqliteRepo(db) as repo:
+        people = repo.list_people()
+    assert people[0].last_contact_at is not None
+    assert people[0].last_contact_at.date() == date.today() - timedelta(days=1)

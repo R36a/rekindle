@@ -8,6 +8,7 @@
 - **快**：一句话 3 步入库；列表最近联系优先，搜索即时过滤
 - **越用越准**：姓名优先级 = 已有人脉姓名 > 常见大姓 > 常见小姓；抽不到就留空让你改
 - **不要求固定句式**：`和张三吃饭`、`张三在吃饭`、`今天张三在吃饭` 都能抽到姓名
+- **公司按时间积累**：同一个人换公司不会覆盖旧记录，详情里能看到完整公司历史
 
 ## 状态
 
@@ -28,7 +29,7 @@
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -e ".[dev]"
-pytest                          # 82 个测试，全离线
+pytest                          # 91 个测试，全离线
 
 # 1. 记一句话：只存草稿（capture），不入库
 python -m rekindle remember "上周和张三在字节工作，他做后端"
@@ -36,6 +37,7 @@ python -m rekindle remember "上周和张三在字节工作，他做后端"
 # 2. 确认入库：可覆盖抽错的字段
 python -m rekindle confirm 1
 python -m rekindle confirm 2 --name 李四 --company 腾讯 --when 2026-10-20
+python -m rekindle confirm 3 --when 昨天        # --when 支持 今天/昨天/前天/上周
 
 # 3. 查找（最近联系优先；姓名/公司/职位/别名都能搜）
 python -m rekindle list
@@ -65,7 +67,7 @@ python -m rekindle --help          # 全部命令
 界面从上到下：
 
 1. **记一句话**：输入原文，点「识别」或按 `Ctrl+Enter`（离线规则抽取）；
-2. **核对后确认**：姓名 / 公司 / 职位 / 日期 / 间隔都能手动改，确认后入库；
+2. **核对后确认**：姓名 / 公司 / 职位 / 日期都能手动改；日期默认今天，旁边有【今天/昨天/前天/上周】快捷按钮；
 3. **查找**：搜索框输入姓名/公司/职位/别名即时过滤（`Ctrl+F` 定位，`Esc` 清空）；双击联系人看交往记录。
 
 GUI 用 Python 内置 Tkinter，不额外安装（PySide6-Essentials 下载失败时的降级方案，见 ADR-007）。

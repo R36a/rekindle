@@ -49,6 +49,9 @@ def record(repo: RecordPort, text: str, now: datetime) -> RecordedCapture:
     学出来——库里有「第五明」时，下次就能抽到「第五」。
     '''
     parsed = extract_rule.extract(text, now.date(), repo.list_person_names())
+    if parsed.occurred_at is None:
+        # 日期字段默认今天；用户可在确认表单里改。
+        parsed.occurred_at = now.date()
     capture_id = repo.add_capture(text, now, parsed)
     return RecordedCapture(capture_id=capture_id, parsed=parsed)
 
@@ -89,10 +92,13 @@ def confirm(
 
     with repo.transaction():
         if existing is None:
+            companies = (
+                {occurred_at.date(): resolved_company} if resolved_company else {}
+            )
             person_id = repo.add_person(
                 Person(
                     display_name=display_name,
-                    company=resolved_company,
+                    companies=companies,
                     role=resolved_role,
                     last_contact_at=occurred_at,
                 )
@@ -103,10 +109,13 @@ def confirm(
             if existing.id is None:
                 raise PersonNotFound(-1)
             person_id = existing.id
+            companies = dict(existing.companies)
+            if resolved_company:
+                companies[occurred_at.date()] = resolved_company
             repo.update_person(
                 existing.model_copy(
                     update={
-                        'company': resolved_company or existing.company,
+                        'companies': companies,
                         'role': resolved_role or existing.role,
                         'last_contact_at': occurred_at,
                     }

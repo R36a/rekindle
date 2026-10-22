@@ -13,7 +13,7 @@ from rekindle.app.ports import BackupPort
 from rekindle.domain.errors import BackupFormatError
 
 EXPORT_FORMAT = 'rekindle-backup'
-EXPORT_VERSION = 1
+EXPORT_VERSION = 2
 
 
 def export_to(repo: BackupPort, path: str | Path, now: datetime) -> Path:

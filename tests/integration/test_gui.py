@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ def test_识别后确认入库(app: Any) -> None:
     assert app._capture_id == 1
     assert app._name.get() == '张三'
     assert app._company.get() == '字节'
+    assert date.fromisoformat(app._when.get())
 
     app.on_confirm()
 
@@ -93,3 +95,21 @@ def test_搜索过滤列表(app: Any) -> None:
     rows = app._people_tree.get_children()
     assert len(rows) == 1
     assert app._people_tree.item(rows[0], 'values')[1] == '李四'
+
+
+def test_快捷日期按钮(app: Any) -> None:
+    app._set_relative_date(-1)
+    expected = (datetime.now().date() - timedelta(days=1)).isoformat()
+    assert app._when.get() == expected
+
+
+def test_列表显示最近公司(app: Any) -> None:
+    for text in ('上周和张三在字节工作', '今天和张三在腾讯工作'):
+        app._text.delete('1.0', 'end')
+        app._text.insert('1.0', text)
+        app.on_extract()
+        app.on_confirm()
+
+    rows = app._people_tree.get_children()
+    assert len(rows) == 1
+    assert app._people_tree.item(rows[0], 'values')[2] == '腾讯'
