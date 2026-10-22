@@ -1,9 +1,7 @@
-﻿'''LLM 抽取：让大模型理解一句话，按字段定义抽出结构化结果。
+'''LLM 抽取：让大模型理解一句话，按字段定义抽出结构化结果。
 
-对应 docs/设计细节.md §2、§9、§10：
-- schema 由字段定义动态生成；AI 只填已有字段，未知字段视为错误；
-- 失败自动修复重试 1 次，仍失败则降级到规则抽取；
-- 本模块不 import httpx（只依赖 LlmClient 协议），便于用 Fake 客户端测试。
+当前只保留代码与测试，CLI / GUI 不接入（LLM 暂停，见 README）。
+本模块不 import httpx（只依赖 LlmClient 协议），便于用 Fake 客户端测试。
 '''
 
 from __future__ import annotations
@@ -37,9 +35,7 @@ def build_system_prompt(fields: list[FieldSpec], today: date) -> str:
         '- company: 公司（字符串或 null）',
         '- role: 职位（字符串或 null）',
         '- occurred_at: 见面/认识时间（YYYY-MM-DD 或 null）',
-        '- cadence_days: 联系频率（整数天数或 null）',
         '- attributes: 自定义字段对象，key 只能用下面列出的字段 key',
-        '- todos: 待办数组，每项含 title、due_on、repeat_rule、people_names',
         '',
         '规则：',
         '1. 抽不到就填 null 或省略，绝不编造；',

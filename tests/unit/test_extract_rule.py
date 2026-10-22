@@ -25,6 +25,44 @@ def test_姓名_抽不到() -> None:
     assert extract('今天天气不错', TODAY).display_name is None
 
 
+def test_姓名_不是姓氏会被拒绝() -> None:
+    assert extract('跟客户开会', TODAY).display_name is None
+
+
+def test_姓名_两个名字只取第一个() -> None:
+    assert extract('和张三李四吃饭', TODAY).display_name == '张三'
+
+
+def test_姓名_三字名() -> None:
+    assert extract('和杨小明吃饭', TODAY).display_name == '杨小明'
+
+
+def test_姓名_复姓带名() -> None:
+    assert extract('和司马光吃饭', TODAY).display_name == '司马光'
+
+
+def test_姓名_没有提示词也能扫到() -> None:
+    assert extract('张三在吃饭', TODAY).display_name == '张三'
+    assert extract('今天张三在吃饭', TODAY).display_name == '张三'
+    assert extract('李四是产品经理', TODAY).display_name == '李四'
+
+
+def test_姓名_已知姓名优先() -> None:
+    assert extract('和公皙明吃饭', TODAY, ['公皙明']).display_name == '公皙明'
+
+
+def test_姓名_没学过的罕见姓会被拒绝() -> None:
+    assert extract('和公皙明吃饭', TODAY).display_name is None
+
+
+def test_姓名_误判优于漏判() -> None:
+    assert extract('常联系', TODAY).display_name == '常联系'
+
+
+def test_姓名_于是不当人名() -> None:
+    assert extract('于是我们聊了聊', TODAY).display_name is None
+
+
 def test_公司_在X工作() -> None:
     assert extract('上周在字节工作', TODAY).company == '字节'
 
@@ -61,40 +99,10 @@ def test_时间_抽不到() -> None:
     assert extract('随便聊聊', TODAY).occurred_at is None
 
 
-def test_联系间隔_常联系() -> None:
-    assert extract('以后常联系', TODAY).cadence_days == 30
-
-
-def test_联系间隔_每周() -> None:
-    assert extract('每周碰一次', TODAY).cadence_days == 7
-
-
-def test_联系间隔_抽不到() -> None:
-    assert extract('再见', TODAY).cadence_days is None
-
-
-def test_待办_答应帮我下周看简历() -> None:
-    result = extract('答应帮我下周看简历', TODAY)
-    assert len(result.todos) == 1
-    assert '看简历' in result.todos[0].title
-    assert result.todos[0].due_on == date(2026, 10, 28)
-
-
-def test_待办_说好一起吃饭() -> None:
-    result = extract('说好一起吃饭', TODAY)
-    assert len(result.todos) == 1
-    assert result.todos[0].title == '一起吃饭'
-
-
-def test_待办_无触发词() -> None:
-    assert extract('今天天气不错', TODAY).todos == []
-
-
 def test_综合_一句话全抽() -> None:
-    result = extract('上周和张三在字节工作，他做后端，答应帮我下周看简历', TODAY)
+    result = extract('上周和张三在字节工作，他做后端', TODAY)
+
     assert result.display_name == '张三'
     assert result.company == '字节'
     assert result.role == '后端'
     assert result.occurred_at == date(2026, 10, 14)
-    assert len(result.todos) == 1
-    assert result.todos[0].people_names == ['张三']

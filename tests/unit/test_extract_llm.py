@@ -1,4 +1,4 @@
-﻿'''LLM 抽取的测试：用 Fake 客户端模拟模型，不联网。'''
+'''LLM 抽取的测试：用 Fake 客户端模拟模型，不联网。'''
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from datetime import date
 
 from rekindle.domain.extract_llm import LlmError, extract_llm
-from rekindle.domain.models import ExtractSource, FieldSpec, RepeatRule
+from rekindle.domain.models import ExtractSource, FieldSpec
 
 TODAY = date(2026, 10, 21)
 
@@ -34,7 +34,6 @@ def test_正常抽取_固定字段() -> None:
             'display_name': '张三',
             'company': '字节',
             'occurred_at': '2026-10-14',
-            'todos': [],
         }),
     ])
     result = extract_llm('上周和张三在字节工作', TODAY, client, [])
@@ -53,25 +52,6 @@ def test_自定义字段_只填已注册() -> None:
     result = extract_llm('张三爱打篮球', TODAY, client, fields)
 
     assert result.attributes == {'hobby': '打篮球'}
-
-
-def test_待办_多人_重复() -> None:
-    client = FakeLlmClient([
-        json.dumps({
-            'display_name': '张三',
-            'todos': [{
-                'title': '和李四吃饭',
-                'due_on': '2026-10-28',
-                'repeat_rule': 'weekly',
-                'people_names': ['张三', '李四'],
-            }],
-        }),
-    ])
-    result = extract_llm('下周三开始每周和李四吃饭', TODAY, client, [])
-
-    assert len(result.todos) == 1
-    assert result.todos[0].people_names == ['张三', '李四']
-    assert result.todos[0].repeat_rule is RepeatRule.WEEKLY
 
 
 def test_非法JSON_重试一次后成功() -> None:

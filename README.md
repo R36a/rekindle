@@ -1,28 +1,76 @@
 # rekindle
 
-> 本地优先的个人人脉管理器：**一句话记人，靠提醒维持联系**。
+> 本地优先的个人人脉管理器：**一句话记人，随时找得到**。
 
-- **无自有服务端**：出站流量仅限你自己配置的 LLM 端点
+- **无自有服务端**：出站流量仅限你自己配置的 LLM 端点（当前不接入，实际零联网）
 - **可离线**：内置规则抽取，断网 / 没有 API key 也能用
 - **不自动写入**：抽取结果先预填，你确认后才入库
-- **可审计**：每次 LLM 调用（请求 / 响应 / token / 耗时）都留在本地
+- **快**：一句话 3 步入库；列表最近联系优先，搜索即时过滤
+- **越用越准**：姓名优先级 = 已有人脉姓名 > 常见大姓 > 常见小姓；抽不到就留空让你改
+- **不要求固定句式**：`和张三吃饭`、`张三在吃饭`、`今天张三在吃饭` 都能抽到姓名
 
 ## 状态
 
-`v0.1` 仓库骨架，功能开发中。产品边界、数据模型、里程碑见：
+`v0.3` **离线原型**：记一句话 → 规则抽取 → 人工确认 → 入库 → 搜索查看。
+
+- **只有两件事**：快速记人、快速查人。提醒与待办已按产品决策移除（没人会在电脑上维护它们）；
+- **LLM 抽取暂停**：`domain/extract_llm.py`、`infra/llm_http.py` 与测试保留，但界面不接入，运行时不产生任何网络请求；
+- 尚未实现：设置持久化、存档/回滚、消歧打分、全局热键（见 [TODO.md](TODO.md)）。
+
+产品边界、数据模型、里程碑见：
 
 - [开发文档 v0.2](docs/开发文档.md) —— 定位、原则、边界、架构、里程碑
 - [设计细节 v0.2](docs/设计细节.md) —— 数据模型、抽取管线、消歧、提醒、隐私
 
-## 快速开始（骨架期）
+## 快速开始
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -e ".[dev]"
-pytest                          # 冒烟测试
-python -m rekindle --version
+pytest                          # 82 个测试，全离线
+
+# 1. 记一句话：只存草稿（capture），不入库
+python -m rekindle remember "上周和张三在字节工作，他做后端"
+
+# 2. 确认入库：可覆盖抽错的字段
+python -m rekindle confirm 1
+python -m rekindle confirm 2 --name 李四 --company 腾讯 --when 2026-10-20
+
+# 3. 查找（最近联系优先；姓名/公司/职位/别名都能搜）
+python -m rekindle list
+python -m rekindle list -q 字节
+python -m rekindle show 1
+python -m rekindle alias 1 张总
+
+# 4. 备份 / 恢复（JSON 是权威格式）
+python -m rekindle export backup.json
+python -m rekindle import backup.json --db new.db
+
+python -m rekindle --help          # 全部命令
 ```
+
+数据默认存 `~/.rekindle/rekindle.db`，可用全局参数 `--db` 或环境变量 `REKINDLE_DB` 指定。
+
+**一次记录的状态流转**：`capture(draft)` → 用户 `confirm` → `capture(confirmed)` + `person` + `interaction`。
+未确认的草稿不产生任何交往记录；同一条 capture 因数据库唯一约束只能入库一次。
+
+## 图形界面
+
+```powershell
+.venv\Scripts\python.exe -m rekindle.gui     # 源码方式
+.venv\Scripts\rekindle-gui.exe               # 安装后（不弹控制台）
+```
+
+界面从上到下：
+
+1. **记一句话**：输入原文，点「识别」或按 `Ctrl+Enter`（离线规则抽取）；
+2. **核对后确认**：姓名 / 公司 / 职位 / 日期 / 间隔都能手动改，确认后入库；
+3. **查找**：搜索框输入姓名/公司/职位/别名即时过滤（`Ctrl+F` 定位，`Esc` 清空）；双击联系人看交往记录。
+
+GUI 用 Python 内置 Tkinter，不额外安装（PySide6-Essentials 下载失败时的降级方案，见 ADR-007）。
+
+
 
 ## 隐私
 

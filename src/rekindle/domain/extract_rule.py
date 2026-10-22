@@ -1,25 +1,25 @@
 ﻿'''规则抽取：从一句话里，用最朴素的字符串规则抠出字段（离线、零网络）。
 
-设计对应 docs/设计细节.md §2、§9、§10：
-- 只抽「系统字段 + 内置属性字段 + 单条待办」；
-- 用户自定义字段这里不做（交给 LLM，T4）；
-- 抽不到就留 None，绝不报错——后面有「预填+确认」兜底。
+姓名按优先级尝试（误判优于漏判）：
+1. 原文里直接出现「已有人脉的姓名」，最长优先；
+2. 「认识 / 见了 / 遇到 / 和 / 跟 / 与」后面的候选，用姓氏表校验；
+3. 全文扫描：先按常见大姓，再按常见小姓。
 
-刻意不用正则、不用网络，只用 str.find / 切片 / 码点判断，方便零基础读懂。
+只抽「姓名 / 公司 / 职位 / 时间」；抽不到就留 None，绝不报错。
 '''
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, timedelta
 
-from rekindle.domain.models import ExtractedFields, ExtractSource, TodoDraft
+from rekindle.domain.models import ExtractedFields, ExtractSource
+from rekindle.domain.surnames import BIG_SURNAMES, SMALL_SURNAMES, surname_length
 
 _ROLE_KEYWORDS = (
     '后端', '前端', '算法', '产品', '运营', '设计', '测试',
     '人事', '运维', '架构', '数据', 'HR', '经理', '总监',
 )
-
-_TODO_TRIGGERS = ('答应', '说好', '承诺', '约好', '回头', '下次')
 
 _NAME_STOP = frozenset('在是去来说聊见吃喝约工入认给让帮做他她我你们了的和跟与')
 
@@ -46,14 +46,63 @@ def _name_after(text: str, start: int) -> str | None:
     return name if 2 <= len(name) <= 4 else None
 
 
-def extract_name(text: str) -> str | None:
+def _trim_to_name(candidate: str, extra_surnames: Iterable[str]) -> str | None:
+    '''校验姓氏；4 字里若第 3 字又是姓，判为两个人，只取第一个。'''
+    if len(candidate) < 2:
+        return None
+    if surname_length(candidate, extra_surnames) == 0:
+        return None
+    if len(candidate) >= 4 and surname_length(candidate[2:], extra_surnames) > 0:
+        return candidate[:2]
+    return candidate
+
+
+def _match_known_name(text: str, known_names: Iterable[str]) -> str | None:
+    '''优先级 1：原文里出现了已有人脉的姓名，最长优先。'''
+    best: str | None = None
+    for name in known_names:
+        if len(name) >= 2 and name in text and (best is None or len(name) > len(best)):
+            best = name
+    return best
+
+
+def _scan_name(
+    text: str, allowed: frozenset[str], extra_surnames: Iterable[str]
+) -> str | None:
+    '''从任意位置找一个「姓 + 名」片段。'''
+    for index, ch in enumerate(text):
+        if ch not in allowed:
+            continue
+        candidate = _name_after(text, index)
+        if not candidate:
+            continue
+        name = _trim_to_name(candidate, extra_surnames)
+        if name:
+            return name
+    return None
+
+
+def extract_name(text: str, known_names: Iterable[str] = ()) -> str | None:
+    known = [name for name in known_names if len(name) >= 2]
+
+    matched = _match_known_name(text, known)
+    if matched:
+        return matched
+
+    extra = {name[0] for name in known}
     for hint in ('认识', '见了', '遇到', '和', '跟', '与'):
         idx = text.find(hint)
         if idx != -1:
-            name = _name_after(text, idx + len(hint))
-            if name:
-                return name
-    return None
+            candidate = _name_after(text, idx + len(hint))
+            if candidate:
+                name = _trim_to_name(candidate, extra)
+                if name:
+                    return name
+
+    return (
+        _scan_name(text, BIG_SURNAMES, extra)
+        or _scan_name(text, SMALL_SURNAMES, extra)
+    )
 
 
 def extract_company(text: str) -> str | None:
@@ -108,48 +157,16 @@ def extract_date(text: str, today: date) -> date | None:
     return None
 
 
-def extract_cadence(text: str) -> int | None:
-    if '每周' in text:
-        return 7
-    if '每月' in text:
-        return 30
-    if '每年' in text:
-        return 365
-    if '常联系' in text or '保持联系' in text or '经常联系' in text:
-        return 30
-    return None
-
-
-def _trim(s: str) -> str:
-    s = s.strip()
-    while s and s[-1] in '，。！？,.!?了~～ ':
-        s = s[:-1]
-    return s.strip()
-
-
-def extract_todos(text: str, today: date, name: str | None) -> list[TodoDraft]:
-    for trigger in _TODO_TRIGGERS:
-        idx = text.find(trigger)
-        if idx == -1:
-            continue
-        title = _trim(text[idx + len(trigger):])
-        if not title:
-            continue
-        due = extract_date(title, today) or extract_date(text, today)
-        people = [name] if name else []
-        return [TodoDraft(title=title, due_on=due, people_names=people)]
-    return []
-
-
-def extract(text: str, today: date) -> ExtractedFields:
-    name = extract_name(text)
+def extract(
+    text: str,
+    today: date,
+    known_names: Iterable[str] = (),
+) -> ExtractedFields:
     return ExtractedFields(
-        display_name=name,
+        display_name=extract_name(text, known_names),
         company=extract_company(text),
         role=extract_role(text),
         occurred_at=extract_date(text, today),
-        cadence_days=extract_cadence(text),
-        todos=extract_todos(text, today, name),
         source=ExtractSource.RULE,
         confidence=0.5,
     )

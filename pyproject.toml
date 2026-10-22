@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rekindle"
 dynamic = ["version"]  # 版本号单一来源在 src/rekindle/__init__.py，见下方 [tool.setuptools.dynamic]
-description = "本地优先的个人人脉管理器：一句话记人，靠提醒维持联系"
+description = "本地优先的个人人脉管理器：一句话记人，随时找得到"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "TBD" }
@@ -26,6 +26,10 @@ dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]
 rekindle = "rekindle.__main__:main"
+
+[project.gui-scripts]
+# 双击启动的图形界面（Windows 下生成 .exe，不弹控制台）
+rekindle-gui = "rekindle.interfaces.gui:main"
 
 [tool.setuptools.dynamic]
 # 让打包时从 __init__.py 读取版本号，避免和 pyproject 各写一份造成不一致
