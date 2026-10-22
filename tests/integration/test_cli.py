@@ -167,3 +167,27 @@ def test_归档和快照(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
 
     assert main(['snapshot', '--db', db]) == 0
     assert '已备份' in capsys.readouterr().out
+
+
+def test_快照列表与恢复(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / 'cli.db')
+    main(['add', '--name', '张三', '--db', db])
+    main(['snapshot', '--db', db])
+    capsys.readouterr()
+
+    main(['add', '--name', '李四', '--db', db])
+    assert main(['snapshots', '--db', db]) == 0
+    assert 'rekindle-' in capsys.readouterr().out
+
+    from rekindle.infra.snapshot import list_snapshots
+
+    snap = list_snapshots(Path(db))[0].path
+    assert main(['restore', str(snap), '--db', db]) == 0
+    capsys.readouterr()
+
+    assert main(['list', '--db', db]) == 0
+    out = capsys.readouterr().out
+    assert '张三' in out
+    assert '李四' not in out

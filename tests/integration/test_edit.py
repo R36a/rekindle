@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, datetime
 
 import pytest
 
 from rekindle.app import edit, record
-from rekindle.domain.errors import MissingName
-from rekindle.infra.snapshot import create_snapshot
-from rekindle.infra.sqlite_repo import SqliteRepo
+from rekindle.domain.errors import MissingName, SnapshotVersionMismatch
+from rekindle.infra.snapshot import (
+    create_snapshot,
+    list_snapshots,
+    restore_snapshot,
+)
+from rekindle.infra.sqlite_repo import SCHEMA_VERSION, SqliteRepo
 
 NOW = datetime(2026, 10, 22, 9, 0)
 
@@ -127,3 +132,34 @@ def test_快照只保留最近N份(repo: SqliteRepo) -> None:
         assert copy.schema_version == repo.schema_version
     finally:
         copy.close()
+
+
+def test_快照列表与恢复(repo: SqliteRepo) -> None:
+    _seed(repo)
+    created = create_snapshot(repo.path)
+    record.confirm(
+        repo,
+        record.record(repo, '今天和李四吃饭', NOW).capture_id,
+        now=NOW,
+    )
+    assert len(repo.list_people()) == 2
+
+    infos = list_snapshots(repo.path)
+    assert infos
+    assert infos[0].version == repo.schema_version
+
+    safety = restore_snapshot(repo.path, created)
+    assert safety.exists()
+    assert [p.display_name for p in repo.list_people()] == ['张三']
+
+
+def test_快照版本不一致会拒绝(repo: SqliteRepo) -> None:
+    directory = repo.path.parent / 'snapshots'
+    directory.mkdir(exist_ok=True)
+    fake = directory / 'rekindle-fake.db'
+    conn = sqlite3.connect(fake)
+    conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION + 1}')
+    conn.close()
+
+    with pytest.raises(SnapshotVersionMismatch):
+        restore_snapshot(repo.path, fake)

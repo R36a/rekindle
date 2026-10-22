@@ -180,3 +180,30 @@ def test_编辑窗口能改资料(app: Any) -> None:
     assert people[0].display_name == '张三丰'
     snapshots = app._repo.path.parent / 'snapshots'
     assert list(snapshots.glob('rekindle-*.db'))
+
+
+def test_快照窗口能恢复(app: Any) -> None:
+    app._text.insert('1.0', '和张三吃饭')
+    app.on_extract()
+    app.on_confirm()
+
+    from rekindle.infra.snapshot import create_snapshot
+
+    create_snapshot(app._repo.path)
+
+    app._text.insert('1.0', '和李四吃饭')
+    app.on_extract()
+    app.on_confirm()
+    assert len(app._repo.list_people()) == 2
+
+    dialog_module = pytest.importorskip('rekindle.interfaces.snapshot_dialog')
+    dialog = dialog_module.SnapshotDialog(
+        app, app._repo.path, app._after_restore
+    )
+    rows = dialog._tree.get_children()
+    assert rows
+    dialog._tree.selection_set(rows[0])
+    dialog._restore()
+
+    assert [p.display_name for p in app._repo.list_people()] == ['张三']
+    dialog.destroy()

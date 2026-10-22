@@ -21,9 +21,14 @@ from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError
 from rekindle.domain.fields import FIELD_LABELS
 from rekindle.domain.models import ExtractedFields, Person
-from rekindle.infra.snapshot import create_snapshot
+from rekindle.infra.snapshot import (
+    create_snapshot,
+    list_snapshots,
+    restore_snapshot,
+)
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
+from rekindle.interfaces.format import human_size
 
 
 def _parse_date(value: str) -> date:
@@ -96,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('person_id', type=int)
 
     p = sub.add_parser('snapshot', parents=[common], help='立即备份数据库')
+
+    p = sub.add_parser('snapshots', parents=[common], help='列出数据库快照')
+
+    p = sub.add_parser('restore', parents=[common], help='从快照恢复（会先备份当前数据）')
+    p.add_argument('path')
 
     p = sub.add_parser('alias', parents=[common], help='给某个人记一个称呼')
     p.add_argument('person_id', type=int)
@@ -186,6 +196,25 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
     if args.command == 'snapshot':
         path = create_snapshot(repo.path)
         print(f'已备份 → {path.resolve()}')
+        return 0
+
+    if args.command == 'snapshots':
+        infos = list_snapshots(repo.path)
+        if not infos:
+            print('还没有快照。用 rekindle snapshot 生成一份。')
+            return 0
+        for info in infos:
+            print(
+                f'{info.created_at:%Y-%m-%d %H:%M:%S}  '
+                f'{human_size(info.size):>9}  v{info.version}  {info.path}'
+            )
+        return 0
+
+    if args.command == 'restore':
+        # 关掉当前连接，Windows 下才能安全覆盖数据库文件。
+        repo.close()
+        safety = restore_snapshot(repo.path, Path(args.path))
+        print(f'已恢复。恢复前的数据已备份为：{safety.resolve()}')
         return 0
 
     if args.command == 'alias':

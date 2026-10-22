@@ -39,3 +39,15 @@ class ImportTargetNotEmpty(RekindleError):
 
 class BackupFormatError(RekindleError):
     '''导出文件不是本项目的格式，或版本不认识。'''
+
+class SnapshotError(RekindleError):
+    '''快照读取或恢复失败。'''
+
+
+class SnapshotVersionMismatch(SnapshotError):
+    def __init__(self, found: int, expected: int) -> None:
+        super().__init__(
+            f'快照数据库版本 v{found} 与当前程序 v{expected} 不一致，请用对应版本恢复'
+        )
+        self.found = found
+        self.expected = expected

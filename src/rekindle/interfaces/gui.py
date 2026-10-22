@@ -21,6 +21,7 @@ from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 from rekindle.interfaces.editor import PersonEditor
 from rekindle.interfaces.inputs import split_values
+from rekindle.interfaces.snapshot_dialog import SnapshotDialog
 
 _COLUMNS_PEOPLE = ('id', '姓名', '公司', '职位', '最近联系')
 
@@ -149,6 +150,9 @@ class RekindleApp(tk.Tk):
             side='left', padx=6
         )
         ttk.Button(bottom, text='刷新', command=self.refresh).pack(side='left')
+        ttk.Button(bottom, text='快照', command=self.open_snapshots).pack(
+            side='left', padx=6
+        )
         ttk.Label(bottom, textvariable=self._status).pack(side='right')
 
         self.bind('<Control-f>', self._focus_search)
@@ -317,6 +321,16 @@ class RekindleApp(tk.Tk):
     def _after_edit(self) -> None:
         self.refresh()
         self._set_status('已保存')
+
+    def open_snapshots(self) -> None:
+        SnapshotDialog(self, self._repo.path, self._after_restore)
+
+    def _after_restore(self) -> None:
+        path = self._repo.path
+        self._repo.close()
+        self._repo = SqliteRepo(path)
+        self.refresh()
+        self._set_status('已恢复快照')
 
     # ---------- 内部 ----------
 

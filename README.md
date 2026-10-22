@@ -12,6 +12,7 @@
 - **联系方式可多个**：微信 / QQ / 邮箱 / 电话都支持追加（不覆盖旧值），搜索时也会匹配
 - **可以不写句子**：留空原话、直接填姓名等字段入库；记录文本自动生成「用户输入了：姓名：…」
 - **可修改**：详情页可改资料、公司历史、联系方式、交往记录；删除用归档；保存前自动快照
+- **可回退**：GUI 里能查看快照列表并一键恢复；恢复前自动再备份当前数据
 
 ## 状态
 
@@ -19,7 +20,7 @@
 
 - **只有两件事**：快速记人、快速查人。提醒与待办已按产品决策移除（没人会在电脑上维护它们）；
 - **LLM 抽取暂停**：`domain/extract_llm.py`、`infra/llm_http.py` 与测试保留，但界面不接入，运行时不产生任何网络请求；
-- 尚未实现：设置持久化、快照列表/恢复界面、消歧打分、全局热键（见 [TODO.md](TODO.md)）。
+- 尚未实现：设置持久化、消歧打分、全局热键（见 [TODO.md](TODO.md)）。
 
 产品边界、数据模型、里程碑见：
 
@@ -32,7 +33,7 @@
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -e ".[dev]"
-pytest                          # 111 个测试，全离线
+pytest                          # 115 个测试，全离线
 
 # 1. 记一句话：只存草稿（capture），不入库
 python -m rekindle remember "上周和张三在字节工作，他做后端"
@@ -45,6 +46,8 @@ python -m rekindle confirm 4 --name 王五 --wechat wangwu_wx --email w@example.
 python -m rekindle add --name 赵六 --wechat zhaoliu_wx   # 不写句子，直接入库
 python -m rekindle archive 1                        # 归档（不删数据）
 python -m rekindle snapshot                         # 立即备份数据库
+python -m rekindle snapshots                        # 列出快照
+python -m rekindle restore <快照文件>                 # 恢复（先自动备份当前数据）
 
 # 3. 查找（最近联系优先；姓名/公司/职位/别名都能搜）
 python -m rekindle list
