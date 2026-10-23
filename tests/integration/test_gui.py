@@ -9,6 +9,10 @@ from typing import Any
 
 import pytest
 
+from rekindle.app import relations as relation_uc
+from rekindle.domain.models import Person
+from rekindle.domain.relations import RelationKind
+
 tk = pytest.importorskip('tkinter')
 gui_module = pytest.importorskip('rekindle.interfaces.gui')
 RekindleApp = gui_module.RekindleApp
@@ -207,3 +211,101 @@ def test_快照窗口能恢复(app: Any) -> None:
 
     assert [p.display_name for p in app._repo.list_people()] == ['张三']
     dialog.destroy()
+
+
+def test_主界面可以记录介绍人(app: Any) -> None:
+    app._text.delete('1.0', 'end')
+    app._name.set('张三')
+    app.on_confirm()
+    zhang = app._repo.list_people()[0].id or 0
+
+    app._name.set('李四')
+    app._introduced_by.set(f'张三 (#{zhang})')
+    app.on_confirm()
+
+    li = next(
+        person
+        for person in app._repo.list_people()
+        if person.display_name == '李四'
+    )
+    relations = app._repo.list_relations(li.id or 0)
+    assert len(relations) == 1
+    assert relations[0].kind == RelationKind.INTRODUCED
+    assert relations[0].person_a_id == zhang
+    assert relations[0].person_b_id == li.id
+
+
+def test_编辑窗口显示人脉关系(app: Any) -> None:
+    zhang = app._repo.add_person(Person(display_name='张三'))
+    li = app._repo.add_person(Person(display_name='李四'))
+    relation_uc.add_relation(
+        app._repo,
+        person_id=zhang,
+        other_id=li,
+        kind=RelationKind.FRIEND,
+        note='大学同学',
+        now=datetime.now(),
+    )
+
+    editor_module = pytest.importorskip('rekindle.interfaces.editor')
+    editor = editor_module.PersonEditor(app, app._repo, zhang, lambda: None)
+    rows = editor._relation_tree.get_children()
+
+    assert len(rows) == 1
+    values = editor._relation_tree.item(rows[0], 'values')
+    assert values[0] == '李四'
+    assert values[1] == '朋友'
+    editor.destroy()
+
+
+def test_编辑窗口可以记录介绍人(app: Any) -> None:
+    zhang = app._repo.add_person(Person(display_name='张三'))
+    li = app._repo.add_person(Person(display_name='李四'))
+
+    editor_module = pytest.importorskip('rekindle.interfaces.editor')
+    editor = editor_module.PersonEditor(app, app._repo, li, lambda: None)
+    editor._introducer_var.set(f'张三 (#{zhang})')
+    editor._save_introducer()
+
+    relations = app._repo.list_relations(li)
+    assert len(relations) == 1
+    assert relations[0].kind == RelationKind.INTRODUCED
+    assert relations[0].person_a_id == zhang
+    assert relations[0].person_b_id == li
+    editor.destroy()
+
+
+def test_关系对话框选择已有联系人(app: Any) -> None:
+    dialog_module = pytest.importorskip('rekindle.interfaces.relation_dialog')
+    zhang = app._repo.add_person(Person(display_name='张三'))
+    li = app._repo.add_person(Person(display_name='李四'))
+
+    dialog = dialog_module.RelationDialog(app, app._repo, zhang, lambda: None)
+    dialog._selected_id = li
+    dialog._kind.set('同学')
+    dialog._save()
+
+    relations = app._repo.list_relations(zhang)
+    assert len(relations) == 1
+    assert relations[0].kind == RelationKind.CLASSMATE
+
+def test_关系对话框新建联系人(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog_module = pytest.importorskip('rekindle.interfaces.relation_dialog')
+    monkeypatch.setattr(
+        dialog_module.messagebox, 'showerror', lambda *args, **kwargs: None
+    )
+    zhang = app._repo.add_person(Person(display_name='张三'))
+
+    dialog = dialog_module.RelationDialog(app, app._repo, zhang, lambda: None)
+    dialog._name_var.set('李四')
+    dialog._company.set('腾讯')
+    dialog._kind.set('同事')
+    dialog._save()
+
+    people = {person.display_name: person for person in app._repo.list_people()}
+    assert '李四' in people
+    li = people['李四'].id or 0
+    kinds = {relation.kind for relation in app._repo.list_relations(li)}
+    assert kinds == {RelationKind.INTRODUCED, RelationKind.COLLEAGUE}

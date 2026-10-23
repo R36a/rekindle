@@ -5,18 +5,21 @@ from __future__ import annotations
 import sqlite3
 import tkinter as tk
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from functools import partial
 from tkinter import messagebox, ttk
 
 from rekindle.app import edit as edit_uc
+from rekindle.app import relations as relation_uc
 from rekindle.domain.dates import parse_date_input
-from rekindle.domain.errors import RekindleError
+from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
-from rekindle.domain.models import Interaction
+from rekindle.domain.models import Interaction, Relation
+from rekindle.domain.relations import RelationKind, label_of, rank_of
 from rekindle.infra.snapshot import create_snapshot
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.inputs import split_values
+from rekindle.interfaces.relation_dialog import RelationDialog
 
 
 class PersonEditor(tk.Toplevel):
@@ -46,6 +49,9 @@ class PersonEditor(tk.Toplevel):
         for spec in DEFAULT_FIELDS:
             self._fields.setdefault(spec.key, [])
         self._interactions: list[Interaction] = repo.list_interactions(person_id)
+        self._relations: list[Relation] = []
+        self._introducer_var = tk.StringVar()
+        self._introducer_ids: dict[str, int] = {}
 
         self._name_var = tk.StringVar(value=person.display_name)
         self._role = tk.StringVar(value=person.role or '')
@@ -60,6 +66,7 @@ class PersonEditor(tk.Toplevel):
         self._build(person.notes or '')
         self._refresh_companies()
         self._refresh_fields()
+        self._refresh_relations()
         self._refresh_interactions()
 
     def _build(self, notes: str) -> None:
@@ -80,6 +87,7 @@ class PersonEditor(tk.Toplevel):
         book.pack(fill='both', expand=True, padx=8, pady=4)
         self._build_companies(book)
         self._build_fields(book)
+        self._build_relations(book)
         self._build_interactions(book)
 
         bottom = ttk.Frame(self)
@@ -143,6 +151,53 @@ class PersonEditor(tk.Toplevel):
             ).pack(anchor='w')
         tab.columnconfigure(1, weight=1)
 
+    def _build_relations(self, book: ttk.Notebook) -> None:
+        tab = ttk.Frame(book, padding=6)
+        book.add(tab, text='人脉关系')
+
+        intro = ttk.LabelFrame(tab, text='介绍关系')
+        intro.pack(fill='x', pady=(0, 6))
+        self._intro_label = ttk.Label(intro, text='（无）', justify='left')
+        self._intro_label.pack(anchor='w', padx=6, pady=6)
+
+        setter = ttk.Frame(intro)
+        setter.pack(fill='x', padx=6, pady=(0, 6))
+        ttk.Label(setter, text='通过谁认识').pack(side='left')
+        self._introducer_combo = ttk.Combobox(
+            setter,
+            textvariable=self._introducer_var,
+            state='readonly',
+            width=30,
+        )
+        self._introducer_combo.pack(side='left', padx=4)
+        ttk.Button(setter, text='记录', command=self._save_introducer).pack(
+            side='left'
+        )
+
+        frames = ttk.Frame(tab)
+        frames.pack(fill='both', expand=True)
+        self._relation_tree = ttk.Treeview(
+            frames, columns=('姓名', '关系', '备注'), show='headings', height=8
+        )
+        for column, width in (('姓名', 130), ('关系', 90), ('备注', 430)):
+            self._relation_tree.heading(column, text=column)
+            self._relation_tree.column(column, width=width, anchor='w')
+        scrollbar = ttk.Scrollbar(
+            frames, orient='vertical', command=self._relation_tree.yview
+        )
+        self._relation_tree.configure(yscrollcommand=scrollbar.set)
+        self._relation_tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        buttons = ttk.Frame(tab)
+        buttons.pack(fill='x', pady=(6, 0))
+        ttk.Button(buttons, text='添加关系', command=self._add_relation).pack(
+            side='left'
+        )
+        ttk.Button(
+            buttons, text='移除选中', command=self._remove_relation
+        ).pack(side='left', padx=6)
+
     def _build_interactions(self, book: ttk.Notebook) -> None:
         tab = ttk.Frame(book, padding=6)
         book.add(tab, text='交往记录')
@@ -202,6 +257,130 @@ class PersonEditor(tk.Toplevel):
                 iid=str(item.id),
                 values=(item.id, item.occurred_at.date().isoformat(), item.summary),
             )
+
+    # ---------- 人脉关系 ----------
+
+    def _refresh_relations(self) -> None:
+        self._relations = self._repo.list_relations(self._person_id)
+        self._relation_tree.delete(*self._relation_tree.get_children())
+
+        rows: list[tuple[int, RelationKind, str, str, str]] = []
+        incoming: list[str] = []
+        outgoing: list[str] = []
+        for relation in self._relations:
+            if relation.kind == RelationKind.INTRODUCED:
+                if relation.person_a_id == self._person_id:
+                    other = self._repo.get_person(relation.person_b_id)
+                    if other is not None:
+                        outgoing.append(other.display_name)
+                elif relation.person_b_id == self._person_id:
+                    other = self._repo.get_person(relation.person_a_id)
+                    if other is not None:
+                        incoming.append(other.display_name)
+                continue
+            other_id = (
+                relation.person_b_id
+                if relation.person_a_id == self._person_id
+                else relation.person_a_id
+            )
+            other = self._repo.get_person(other_id)
+            if relation.id is None or other is None:
+                continue
+            rows.append(
+                (
+                    relation.id,
+                    relation.kind,
+                    other.display_name,
+                    label_of(relation.kind),
+                    relation.note or '',
+                )
+            )
+
+        rows.sort(key=lambda row: (rank_of(row[1]), row[2]))
+        for relation_id, _kind, name, label, note in rows:
+            self._relation_tree.insert(
+                '', 'end', iid=str(relation_id), values=(name, label, note)
+            )
+
+        lines: list[str] = []
+        if incoming:
+            lines.append('通过 ' + '、'.join(sorted(incoming)) + ' 认识')
+        if outgoing:
+            lines.append('介绍过 ' + '、'.join(sorted(outgoing)))
+        self._intro_label.configure(
+            text='\n'.join(lines) if lines else '（无）'
+        )
+        self._refresh_introducer_choices()
+
+    def _refresh_introducer_choices(self) -> None:
+        people = [
+            person
+            for person in self._repo.list_people('', 500)
+            if person.id != self._person_id
+        ]
+        self._introducer_ids = {
+            f'{person.display_name} (#{person.id})': person.id
+            for person in people
+            if person.id is not None
+        }
+        values: tuple[str, ...] = ('', *self._introducer_ids)
+        self._introducer_combo.configure(values=values)
+        if self._introducer_var.get() not in values:
+            self._introducer_var.set('')
+
+    def _save_introducer(self) -> None:
+        introducer_id = self._introducer_ids.get(self._introducer_var.get())
+        if introducer_id is None:
+            messagebox.showinfo(
+                '先选一个人', '请选择介绍人，再点记录', parent=self
+            )
+            return
+        if not self._snapshot_once():
+            return
+        try:
+            relation_uc.add_introduction(
+                self._repo,
+                introducer_id=introducer_id,
+                introduced_id=self._person_id,
+                note=None,
+                now=datetime.now(),
+            )
+        except RelationExists:
+            messagebox.showinfo(
+                '已经记录', '这条介绍关系已经存在', parent=self
+            )
+            return
+        except RekindleError as exc:
+            messagebox.showerror('记录失败', str(exc), parent=self)
+            return
+        self._introducer_var.set('')
+        self._refresh_relations()
+        self._on_saved()
+
+    def _add_relation(self) -> None:
+        RelationDialog(self, self._repo, self._person_id, self._after_relation_change)
+
+    def _remove_relation(self) -> None:
+        selection = self._relation_tree.selection()
+        if not selection:
+            return
+        if not messagebox.askyesno(
+            '移除关系', '只删除这条关系，不删除人。继续？', parent=self
+        ):
+            return
+        if not self._snapshot_once():
+            return
+        try:
+            relation_uc.remove_relation(self._repo, int(selection[0]))
+        except RekindleError as exc:
+            messagebox.showerror('移除失败', str(exc), parent=self)
+            return
+        self._refresh_relations()
+        self._on_saved()
+
+    def _after_relation_change(self) -> None:
+        self._refresh_relations()
+        self._on_saved()
 
     # ---------- 公司历史 ----------
 

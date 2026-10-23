@@ -15,7 +15,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from rekindle.domain.relations import RelationKind
 
 
 class CaptureStatus(StrEnum):
@@ -89,6 +91,32 @@ class Alias(_StrictModel):
     person_id: int
     text_norm: str = Field(min_length=1, max_length=40)
     source: str = 'user'
+
+
+class Relation(_StrictModel):
+    '''一条人与人之间的关系边。
+
+    六种「认识」关系是对称的，存成 person_a_id < person_b_id；
+    introduced 有方向：person_a_id 是介绍人，person_b_id 是被介绍人。
+    '''
+
+    id: int | None = None
+    person_a_id: int
+    person_b_id: int
+    kind: RelationKind
+    note: str | None = None
+    created_at: datetime
+
+    @model_validator(mode='after')
+    def _check_endpoints(self) -> Relation:
+        if self.person_a_id == self.person_b_id:
+            raise ValueError('不能和自己建立关系')
+        if (
+            self.kind != RelationKind.INTRODUCED
+            and self.person_a_id >= self.person_b_id
+        ):
+            raise ValueError('对称关系必须 person_a_id < person_b_id')
+        return self
 
 
 class Capture(_StrictModel):

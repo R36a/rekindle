@@ -1,4 +1,4 @@
-﻿'''端口（开发文档 §5.2 的 seam）。
+'''端口（开发文档 §5.2 的 seam）。
 
 app 只认这里的协议；真实实现是 infra/sqlite_repo.py，测试里用临时 sqlite。
 方法宁可少一点，也不要为「以后可能用到」提前加。
@@ -10,7 +10,7 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol
 
-from rekindle.domain.models import Capture, ExtractedFields, Interaction, Person
+from rekindle.domain.models import Capture, ExtractedFields, Interaction, Person, Relation
 
 
 class RecordPort(Protocol):
@@ -81,3 +81,15 @@ class BackupPort(Protocol):
     def export_all(self) -> dict[str, list[dict[str, object]]]: ...
 
     def import_all(self, tables: dict[str, list[dict[str, object]]]) -> None: ...
+
+
+class RelationPort(Protocol):
+    '''人与人之间的关系边。'''
+
+    def get_person(self, person_id: int) -> Person | None: ...
+
+    def add_relation(self, relation: Relation) -> int: ...
+
+    def list_relations(self, person_id: int) -> list[Relation]: ...
+
+    def delete_relation(self, relation_id: int) -> None: ...

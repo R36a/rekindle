@@ -40,6 +40,7 @@ class ImportTargetNotEmpty(RekindleError):
 class BackupFormatError(RekindleError):
     '''导出文件不是本项目的格式，或版本不认识。'''
 
+
 class SnapshotError(RekindleError):
     '''快照读取或恢复失败。'''
 
@@ -51,3 +52,17 @@ class SnapshotVersionMismatch(SnapshotError):
         )
         self.found = found
         self.expected = expected
+
+
+class RelationExists(RekindleError):
+    '''同一段关系已经记录过；重复添加不该产生第二行。'''
+
+
+class RelationNotFound(RekindleError):
+    def __init__(self, relation_id: int) -> None:
+        super().__init__(f'找不到关系 #{relation_id}')
+        self.relation_id = relation_id
+
+
+class InvalidRelation(RekindleError):
+    '''关系类型不合法、指向自己、或两端不存在。'''

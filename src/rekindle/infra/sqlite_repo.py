@@ -17,6 +17,8 @@ from rekindle.domain.errors import (
     BackupFormatError,
     ImportTargetNotEmpty,
     PersonNotFound,
+    RelationExists,
+    RelationNotFound,
 )
 from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.domain.models import (
@@ -26,11 +28,15 @@ from rekindle.domain.models import (
     ExtractSource,
     Interaction,
     Person,
+    Relation,
 )
 from rekindle.domain.normalize import normalize_name
+from rekindle.domain.relations import RelationKind
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
+# person_relation.kind 的取值与 domain/relations.py 的 RelationKind 同步；
+# 以后允许自定义类型时，改成 relation_kind 表并做 v7 迁移。
 _SCHEMA = (
     '''
     CREATE TABLE person (
@@ -105,13 +111,41 @@ _SCHEMA = (
     )
     ''',
     'CREATE INDEX ix_interaction_person_time ON interaction(person_id, occurred_at DESC)',
+    '''
+    CREATE TABLE person_relation (
+        id          INTEGER PRIMARY KEY,
+        person_a_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        person_b_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        kind        TEXT    NOT NULL,
+        note        TEXT,
+        created_at  TEXT    NOT NULL,
+        CHECK (person_a_id <> person_b_id),
+        CHECK (kind IN (
+            'stranger', 'client', 'colleague',
+            'classmate', 'friend', 'relative', 'introduced'
+        )),
+        CHECK (kind = 'introduced' OR person_a_id < person_b_id)
+    )
+    ''',
+    'CREATE UNIQUE INDEX ux_person_relation ON person_relation('
+    'person_a_id, person_b_id, kind)',
+    'CREATE INDEX ix_person_relation_b ON person_relation(person_b_id)',
 )
 
 # 导出顺序 = 外键的父 → 子；导入按同样顺序插入。
-_TABLES = ('person', 'alias', 'capture', 'interaction', 'person_company', 'person_field')
+_TABLES = (
+    'person',
+    'alias',
+    'capture',
+    'interaction',
+    'person_company',
+    'person_field',
+    'person_relation',
+)
 
 # 旧结构（v1）里多出来的表；删表按子 → 父。
 _LEGACY_TABLES = (
+    'person_relation',
     'person_field',
     'field',
     'person_company',
@@ -171,6 +205,17 @@ def _interaction(row: sqlite3.Row) -> Interaction:
         capture_id=row['capture_id'],
         occurred_at=datetime.fromisoformat(row['occurred_at']),
         summary=row['summary'],
+        created_at=datetime.fromisoformat(row['created_at']),
+    )
+
+
+def _relation(row: sqlite3.Row) -> Relation:
+    return Relation(
+        id=row['id'],
+        person_a_id=row['person_a_id'],
+        person_b_id=row['person_b_id'],
+        kind=RelationKind(row['kind']),
+        note=row['note'],
         created_at=datetime.fromisoformat(row['created_at']),
     )
 
@@ -523,6 +568,49 @@ class SqliteRepo:
         )
         if cur.rowcount == 0:
             raise PersonNotFound(person_id)
+
+    # ---------- 关系 ----------
+
+    def add_relation(self, relation: Relation) -> int:
+        '''写一条关系；对称关系先归一化成 a < b，介绍关系保留方向。'''
+        person_a_id = relation.person_a_id
+        person_b_id = relation.person_b_id
+        if relation.kind != RelationKind.INTRODUCED:
+            person_a_id, person_b_id = sorted((person_a_id, person_b_id))
+        try:
+            with self._atomic():
+                cur = self._conn.execute(
+                    'INSERT INTO person_relation '
+                    '(person_a_id, person_b_id, kind, note, created_at) '
+                    'VALUES (?, ?, ?, ?, ?)',
+                    (
+                        person_a_id,
+                        person_b_id,
+                        relation.kind.value,
+                        relation.note,
+                        relation.created_at.isoformat(),
+                    ),
+                )
+                return int(cur.lastrowid or 0)
+        except sqlite3.IntegrityError as exc:
+            if 'UNIQUE' in str(exc).upper():
+                raise RelationExists() from exc
+            raise
+
+    def list_relations(self, person_id: int) -> list[Relation]:
+        rows = self._conn.execute(
+            'SELECT * FROM person_relation '
+            'WHERE person_a_id = ? OR person_b_id = ? ORDER BY id',
+            (person_id, person_id),
+        ).fetchall()
+        return [_relation(row) for row in rows]
+
+    def delete_relation(self, relation_id: int) -> None:
+        cur = self._conn.execute(
+            'DELETE FROM person_relation WHERE id = ?', (relation_id,)
+        )
+        if cur.rowcount == 0:
+            raise RelationNotFound(relation_id)
 
     # ---------- 查询 ----------
 

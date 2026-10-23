@@ -13,7 +13,9 @@ from rekindle.app.ports import BackupPort
 from rekindle.domain.errors import BackupFormatError
 
 EXPORT_FORMAT = 'rekindle-backup'
-EXPORT_VERSION = 3
+# v4 增加 person_relation；仍接受 v3（没有关系表）的旧备份。
+EXPORT_VERSION = 4
+SUPPORTED_VERSIONS = (3, EXPORT_VERSION)
 
 
 def export_to(repo: BackupPort, path: str | Path, now: datetime) -> Path:
@@ -37,7 +39,7 @@ def import_from(repo: BackupPort, path: str | Path) -> int:
     data = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(data, dict) or data.get('format') != EXPORT_FORMAT:
         raise BackupFormatError('不是 rekindle 导出的 JSON 文件')
-    if data.get('version') != EXPORT_VERSION:
+    if data.get('version') not in SUPPORTED_VERSIONS:
         raise BackupFormatError(f'不支持的备份版本：{data.get("version")}')
     tables = data.get('tables')
     if not isinstance(tables, dict):

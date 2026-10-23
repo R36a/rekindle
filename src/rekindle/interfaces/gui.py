@@ -15,7 +15,8 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from rekindle.app import queries, record
-from rekindle.domain.errors import RekindleError
+from rekindle.app import relations as relation_uc
+from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
@@ -44,6 +45,8 @@ class RekindleApp(tk.Tk):
         }
         self._query = tk.StringVar()
         self._status = tk.StringVar(value=f'数据库：{db_path}')
+        self._introduced_by = tk.StringVar()
+        self._introducer_ids: dict[str, int] = {}
 
         self._build()
         self.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -100,8 +103,20 @@ class RekindleApp(tk.Tk):
         contact.columnconfigure(1, weight=1)
         contact.columnconfigure(3, weight=1)
 
+        intro = ttk.Frame(preview)
+        intro.grid(row=3, column=0, columnspan=4, sticky='we', padx=4, pady=3)
+        ttk.Label(intro, text='通过谁认识').pack(side='left')
+        self._introducer_combo = ttk.Combobox(
+            intro,
+            textvariable=self._introduced_by,
+            state='readonly',
+            width=34,
+        )
+        self._introducer_combo.pack(side='left', padx=4)
+        ttk.Label(intro, text='（可选；只记录介绍关系）').pack(side='left')
+
         quick = ttk.Frame(preview)
-        quick.grid(row=3, column=0, columnspan=4, sticky='w', padx=4, pady=(0, 2))
+        quick.grid(row=4, column=0, columnspan=4, sticky='w', padx=4, pady=(0, 2))
         ttk.Label(quick, text='日期快捷：').pack(side='left')
         for label, days in (('今天', 0), ('昨天', -1), ('前天', -2), ('上周', -7)):
             ttk.Button(
@@ -112,7 +127,7 @@ class RekindleApp(tk.Tk):
             ).pack(side='left', padx=2)
 
         actions = ttk.Frame(preview)
-        actions.grid(row=4, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
+        actions.grid(row=5, column=0, columnspan=4, sticky='w', padx=4, pady=(4, 6))
         ttk.Button(actions, text='确认入库', command=self.on_confirm).pack(side='left')
         ttk.Button(actions, text='丢弃草稿', command=self.on_discard).pack(
             side='left', padx=6
@@ -240,6 +255,23 @@ class RekindleApp(tk.Tk):
             messagebox.showerror('确认失败', str(exc), parent=self)
             return
 
+        introducer_id = self._introducer_ids.get(self._introduced_by.get())
+        if introducer_id is not None and introducer_id != result.person_id:
+            try:
+                relation_uc.add_introduction(
+                    self._repo,
+                    introducer_id=introducer_id,
+                    introduced_id=result.person_id,
+                    note=None,
+                    now=datetime.now(),
+                )
+            except RelationExists:
+                pass
+            except RekindleError as exc:
+                messagebox.showwarning(
+                    '介绍关系未保存', str(exc), parent=self
+                )
+
         self._clear_preview()
         self.refresh()
         mode = '手动填写' if was_manual else '来自草稿'
@@ -281,6 +313,19 @@ class RekindleApp(tk.Tk):
 
     def refresh(self) -> None:
         self._refresh_people()
+        self._refresh_introducers()
+
+    def _refresh_introducers(self) -> None:
+        people = self._repo.list_people('', 500)
+        self._introducer_ids = {
+            f'{person.display_name} (#{person.id})': person.id
+            for person in people
+            if person.id is not None
+        }
+        values: tuple[str, ...] = ('', *self._introducer_ids)
+        self._introducer_combo.configure(values=values)
+        if self._introduced_by.get() not in values:
+            self._introduced_by.set('')
 
     def _refresh_people(self) -> None:
         query = self._query.get().strip()
@@ -349,6 +394,7 @@ class RekindleApp(tk.Tk):
         self._when.set(datetime.now().date().isoformat())
         for var in self._field_vars.values():
             var.set('')
+        self._introduced_by.set('')
 
     def _on_close(self) -> None:
         self._repo.close()

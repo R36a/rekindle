@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -40,6 +41,31 @@ def test_导入到非空库被拒绝(repo: SqliteRepo, tmp_path: Path) -> None:
     with pytest.raises(ImportTargetNotEmpty):
         backup.import_from(repo, out)
 
+
+def test_可以导入v3旧备份(repo: SqliteRepo, tmp_path: Path) -> None:
+    path = tmp_path / 'v3.json'
+    payload = {
+        'format': 'rekindle-backup',
+        'version': 3,
+        'tables': {
+            'person': [
+                {
+                    'id': 1,
+                    'display_name': '张三',
+                    'pinyin': '',
+                    'initials': '',
+                    'role': None,
+                    'notes': None,
+                    'last_contact_at': None,
+                    'archived': 0,
+                }
+            ]
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    assert backup.import_from(repo, path) == 1
+    assert repo.list_people()[0].display_name == '张三'
 
 def test_不是本项目的文件会被拒绝(repo: SqliteRepo, tmp_path: Path) -> None:
     path = tmp_path / 'other.json'
