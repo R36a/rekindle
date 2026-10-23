@@ -31,6 +31,8 @@
 
 ## 快速开始
 
+需要 **Python 3.14+**（与 `pyproject.toml` 的 `requires-python` 一致；CI 也只测这个版本）。
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows

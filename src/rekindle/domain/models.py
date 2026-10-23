@@ -13,12 +13,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class CaptureStatus(str, Enum):
+class CaptureStatus(StrEnum):
     '''一条原始输入的三种状态。'''
 
     DRAFT = 'draft'
@@ -26,7 +26,7 @@ class CaptureStatus(str, Enum):
     DISCARDED = 'discarded'
 
 
-class ExtractSource(str, Enum):
+class ExtractSource(StrEnum):
     '''这次抽取是怎么来的。'''
 
     RULE = 'rule'
@@ -116,7 +116,7 @@ class Interaction(_StrictModel):
     created_at: datetime
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     '''AI 可以请求的、需要授权的动作（对应 §11.1 的开关）。'''
 
     ADD_FIELD = 'add_field'

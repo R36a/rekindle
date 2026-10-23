@@ -1,5 +1,10 @@
 # 持续集成：每次 push / PR 自动跑静态检查与测试。
 #
+# 支持范围 = Python 3.14，唯一来源是下面的 PYTHON_VERSION。
+# 只测一个版本是刻意的：这是本地运行的桌面工具，不是供人 pip 安装的库，
+# 测「实际运行的版本」比测「理论上兼容的版本」更有价值，也让 CI 与本地完全一致。
+# 改版本时必须同步 pyproject.toml 的 requires-python（同一事实，两处引用）。
+#
 # 覆盖率门禁只卡「核心层」（domain / app / infra），不卡总覆盖率：
 # GUI 测试依赖 Tk，没有图形环境时会自动 skip，总覆盖率会从 86% 掉到 61%；
 # 核心层覆盖率不受影响，稳定在 93%（813 条语句）。门禁设在 90%，留 3 个点余量。
@@ -13,6 +18,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  PYTHON_VERSION: "3.14"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -28,8 +36,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # 用中间版本跑 lint / 类型检查：工具链兼容性最稳，不影响结论
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -38,6 +45,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: 环境信息
+        run: |
+          python -V
+          python -m pip --version
+          python -m ruff --version
+          python -m mypy --version
+
       - name: ruff
         run: ruff check src tests
 
@@ -45,20 +59,15 @@ jobs:
         run: mypy
 
   test:
-    name: 测试 (Python ${{ matrix.python-version }})
+    name: 测试
     runs-on: windows-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        # 下界（pyproject 的 requires-python）与本地开发版本各跑一遍
-        python-version: ["3.10", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
