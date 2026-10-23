@@ -1,5 +1,7 @@
 # rekindle
 
+[![CI](https://github.com/R36a/rekindle/actions/workflows/ci.yml/badge.svg)](https://github.com/R36a/rekindle/actions/workflows/ci.yml)
+
 > 本地优先的个人人脉管理器：**一句话记人，随时找得到**。
 
 - **无自有服务端**：出站流量仅限你自己配置的 LLM 端点（当前不接入，实际零联网）
