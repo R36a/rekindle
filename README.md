@@ -36,7 +36,7 @@
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-pip install -e ".[dev]"
+pip install -e ".[dev,llm]"
 pytest                          # 115 个测试，全离线
 
 # 1. 记一句话：只存草稿（capture），不入库

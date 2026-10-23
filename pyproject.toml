@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # LLM 抽取（阶段 2 起使用）
+# 注意：mypy 会检查 src/rekindle/infra/llm_http.py，所以开发环境要带这个 extra
+# （README 与 CI 都用 pip install -e ".[dev,llm]"）。
 llm = ["httpx>=0.27"]
 # 图形界面（阶段 3 起使用）
 # 只要 Essentials：QtWidgets/QtGui 足够做托盘、全局热键、气泡通知；
