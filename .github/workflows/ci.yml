@@ -7,7 +7,7 @@
 #
 # 覆盖率门禁只卡「核心层」（domain / app / infra），不卡总覆盖率：
 # GUI 测试依赖 Tk，没有图形环境时会自动 skip，总覆盖率会从 86% 掉到 61%；
-# 核心层覆盖率不受影响，稳定在 93%（813 条语句）。门禁设在 90%，留 3 个点余量。
+# 核心层覆盖率不受影响，稳定在 94%（914 条语句）。门禁设在 90%，留 4 个点余量。
 name: CI
 
 on:
@@ -32,9 +32,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -63,9 +63,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
