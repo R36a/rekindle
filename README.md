@@ -22,7 +22,7 @@
 
 ## 状态
 
-`v0.3` **离线原型**：记一句话 → 规则抽取 → 人工确认 → 入库 → 搜索查看。
+**离线原型**（首个公开版本 `v0.1.0`）：记一句话 → 规则抽取 → 人工确认 → 入库 → 搜索查看。
 
 - **只有两件事**：快速记人、快速查人。提醒与待办已按产品决策移除（没人会在电脑上维护它们）；
 - **LLM 未接入（不是“默认关闭”，是没有入口）**：`domain/extract_llm.py`、`infra/llm_http.py` 与 6 个单测保留，但 CLI / GUI / API 都不会调用它们，运行时零出站；
@@ -35,7 +35,7 @@
 
 ## 快速上手（Windows）
 
-1. 运行 **`dist\rekindle.exe`**（本地打包产物，约 20 MB；仓库暂未上传 Release）
+1. 运行 **`dist\rekindle.exe`**（约 20 MB）；发布后也可从 [Releases](https://github.com/R36a/rekindle/releases) 下载
 2. 双击即可，无需安装 Python。首次启动约 5–20 秒（单文件解压 + 杀软扫描），之后 2 秒内；exe 未签名，SmartScreen 提示时点「更多信息 → 仍要运行」
 3. 三步：**① 输入一句话 → 识别 → ② 核对并确认 → ③ 搜索联系人**
 
@@ -137,4 +137,4 @@ rekindle-api --db ~/.rekindle/rekindle.db --port 8000
 
 ## License
 
-TBD（发布前确定）。
+MIT，见 [LICENSE](LICENSE)。

@@ -8,7 +8,7 @@ dynamic = ["version"]  # 版本号单一来源在 src/rekindle/__init__.py，见
 description = "本地优先的个人人脉管理器：一句话记人，随时找得到"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { text = "TBD" }
+license = { text = "MIT" }
 dependencies = [
     # 领域模型与校验：核心，不引入框架
     "pydantic>=2.7",
