@@ -54,4 +54,4 @@
 - [x] T3 规则抽取：extract_rule.py + 20 测试（离线）
 - [x] AI 权限关系原则加入 .clinerules；权限与存档设计（§11）
 - [x] 权限设置领域模型 + 代码层开关（Settings/Permission/require）
-- [x] T4 LLM 抽取：extract_llm + HttpLlmClient + 45 测试；真机验证通过
+- [x] T4 LLM 抽取：extract_llm + HttpLlmClient + 6 个单测；DeepSeek 真机验证（HTTP 200），但**未接入界面**

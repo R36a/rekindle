@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import sys
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from functools import partial
@@ -33,6 +34,7 @@ class RekindleApp(tk.Tk):
         self.title('rekindle — 本地人脉（离线）')
         self.geometry('820x700')
         self.minsize(700, 560)
+        self._set_window_icon()
         self._repo = SqliteRepo(db_path)
         self._capture_id: int | None = None
 
@@ -53,6 +55,15 @@ class RekindleApp(tk.Tk):
         self.refresh()
 
     # ---------- 布局 ----------
+
+    def _set_window_icon(self) -> None:
+        '''打包后用自带图标；源码运行时找不到就跳过。'''
+        base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[3]))
+        icon = base / 'assets' / 'rekindle.ico'
+        if icon.exists():
+            with contextlib.suppress(tk.TclError):
+                # tkinter 的 iconbitmap 没有类型标注（同 editor.py 的 curselection）
+                self.iconbitmap(default=str(icon))  # type: ignore[no-untyped-call]
 
     def _build(self) -> None:
         capture = ttk.LabelFrame(self, text='① 输入一句话（Ctrl+Enter 识别）')

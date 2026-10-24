@@ -27,6 +27,8 @@ gui = ["PySide6-Essentials>=6.12"]
 # 注意：mypy 会检查、测试会运行 interfaces/api.py，所以开发环境要带这个 extra
 # （README 与 CI 都用 pip install -e ".[dev,llm,api]"）。
 api = ["fastapi>=0.115", "uvicorn>=0.30"]
+# 打包 Windows exe（tools/build_exe.ps1 使用）
+build = ["pyinstaller>=6.22"]
 # 开发期工具
 # 钉住 ruff / mypy 的版本：这两个工具换个小版本就可能新增检查项，
 # 不钉住会出现「本地绿、CI 红」的假故障（本次就踩到了）。
