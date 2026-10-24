@@ -24,7 +24,7 @@ from rekindle.interfaces.editor import PersonEditor
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.snapshot_dialog import SnapshotDialog
 
-_COLUMNS_PEOPLE = ('id', '姓名', '公司', '职位', '最近联系')
+_COLUMNS_PEOPLE = ('ID', '姓名', '公司', '职位', '最近联系')
 
 
 class RekindleApp(tk.Tk):
@@ -55,7 +55,7 @@ class RekindleApp(tk.Tk):
     # ---------- 布局 ----------
 
     def _build(self) -> None:
-        capture = ttk.LabelFrame(self, text='① 记一句话（Ctrl+Enter 识别）')
+        capture = ttk.LabelFrame(self, text='① 输入一句话（Ctrl+Enter 识别）')
         capture.pack(fill='x', padx=8, pady=(8, 4))
         self._text = tk.Text(capture, height=3, wrap='word')
         self._text.pack(fill='x', padx=6, pady=6)
@@ -65,11 +65,11 @@ class RekindleApp(tk.Tk):
         row = ttk.Frame(capture)
         row.pack(fill='x', padx=6, pady=(0, 6))
         ttk.Button(row, text='识别', command=self.on_extract).pack(side='left')
-        ttk.Label(row, text='离线规则抽取，不联网；抽不到可手动填写').pack(
+        ttk.Label(row, text='离线规则抽取，不联网；识别只预填，点「确认入库」才写入').pack(
             side='left', padx=8
         )
 
-        preview = ttk.LabelFrame(self, text='② 核对后确认（字段可改）')
+        preview = ttk.LabelFrame(self, text='② 核对并确认（字段可改）')
         preview.pack(fill='x', padx=8, pady=4)
         fields = (
             ('姓名', self._name),
@@ -133,7 +133,7 @@ class RekindleApp(tk.Tk):
             side='left', padx=6
         )
 
-        browser = ttk.LabelFrame(self, text='③ 查找（Ctrl+F 定位搜索）')
+        browser = ttk.LabelFrame(self, text='③ 查找联系人（Ctrl+F）')
         browser.pack(fill='both', expand=True, padx=8, pady=4)
         search_row = ttk.Frame(browser)
         search_row.pack(fill='x', padx=6, pady=(6, 2))

@@ -17,6 +17,11 @@
 - **可回退**：GUI 里能查看快照列表并一键恢复；恢复前自动再备份当前数据
 - **可记关系**：详情页能记「他认识谁」，新增联系人可记「通过谁认识」；关系类型六档（陌生人 → 亲戚）
 
+<p align="center">
+  <img src="docs/screenshots/gui.png" alt="rekindle 主界面：输入一句话，自动识别姓名 / 公司 / 职位 / 日期" width="760">
+</p>
+<p align="center"><sub>一句话识别 → 字段预填 → 确认入库；列表按最近联系排序（截图为演示数据）</sub></p>
+
 ## 状态
 
 `v0.3` **离线原型**：记一句话 → 规则抽取 → 人工确认 → 入库 → 搜索查看。
@@ -37,8 +42,8 @@
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-pip install -e ".[dev,llm]"
-pytest                          # 135 个测试，全离线
+pip install -e ".[dev,llm,api]"
+pytest                          # 144 个测试，全离线
 
 # 1. 记一句话：只存草稿（capture），不入库
 python -m rekindle remember "上周和张三在字节工作，他做后端"
@@ -75,20 +80,45 @@ python -m rekindle --help          # 全部命令
 ## 图形界面
 
 ```powershell
-.venv\Scripts\python.exe -m rekindle.gui     # 源码方式
+.venv\Scripts\python.exe -m rekindle.interfaces.gui     # 源码方式
 .venv\Scripts\rekindle-gui.exe               # 安装后（不弹控制台）
 ```
 
 界面从上到下：
 
-1. **记一句话**：输入原文，点「识别」或按 `Ctrl+Enter`（离线规则抽取）；
-2. **核对后确认**：姓名 / 公司 / 职位 / 日期都能手动改；日期默认今天，旁边有【今天/昨天/前天/上周】快捷按钮；
-3. **查找**：搜索框输入姓名/公司/职位/别名即时过滤（`Ctrl+F` 定位，`Esc` 清空）；双击联系人看交往记录。
+1. **输入一句话**：输入原文，点「识别」或按 `Ctrl+Enter`（离线规则抽取；**识别只预填，不会入库**）；
+2. **核对并确认**：姓名 / 公司 / 职位 / 日期都能手动改；日期默认今天，旁边有【今天/昨天/前天/上周】快捷按钮；
+3. **查找联系人**：搜索框输入姓名/公司/职位/别名即时过滤（`Ctrl+F` 定位，`Esc` 清空）；双击联系人看交往记录。
 4. **关系**：详情页「人脉关系」可记录他认识谁；新增联系人时可选「通过谁认识」（只记介绍关系，不自动补认识边）。
 
 GUI 用 Python 内置 Tkinter，不额外安装（PySide6-Essentials 下载失败时的降级方案，见 ADR-007）。
 
 
+
+## HTTP API（可选）
+
+CLI / GUI / HTTP 共用同一套 `app/` 用例层，换入口不改业务逻辑。
+
+```bash
+pip install -e ".[api]"
+rekindle-api --db ~/.rekindle/rekindle.db --port 8000
+# 交互式文档：http://127.0.0.1:8000/docs
+```
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/health` | 健康检查 |
+| POST | `/captures` | 记一句话（只存草稿） |
+| POST | `/captures/{id}/confirm` | 确认草稿并入库 |
+| POST | `/people` | 不写句子，直接按字段入库 |
+| GET | `/people?query=&limit=` | 列表（最近联系优先） |
+| GET | `/people/{id}` | 详情 + 交往记录 |
+
+业务错误映射：找不到 404、重复确认 409、字段不合法 400。
+
+<p align="center">
+  <img src="docs/screenshots/api-docs.png" alt="FastAPI Swagger 文档：6 个接口" width="760">
+</p>
 
 ## 隐私
 
