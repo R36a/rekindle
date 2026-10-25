@@ -19,12 +19,7 @@ DEFAULT_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(key='phone', label='电话', description='手机号'),
 )
 
-FIELD_LABELS: dict[str, str] = {field.key: field.label for field in DEFAULT_FIELDS}
-
-# 允许写入 person_field 的 key 集合：唯一来源就是上面的 DEFAULT_FIELDS。
-# 以前还有一张 field 表（含 label/type/description 列，无人读取）与外键，
-# 等于同一份事实存两处；现在校验只在仓储层用这个常量做。
-FIELD_KEYS: frozenset[str] = frozenset(FIELD_LABELS)
+FIELD_KEYS: frozenset[str] = frozenset(spec.key for spec in DEFAULT_FIELDS)
 
 
 def normalize_values(values: Iterable[str]) -> list[str]:

@@ -20,15 +20,24 @@ from rekindle.app import relations as relation_uc
 from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.domain.limits import MAX_LIST_LIMIT
+from rekindle.domain.person_schema import CONTACT_KEYS
 from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 from rekindle.interfaces.editor import PersonEditor
+from rekindle.interfaces.forms import build_grid, table_columns
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.snapshot_dialog import SnapshotDialog
 from rekindle.interfaces.ui import fill_person_choices, make_table, read_date
 
-_PEOPLE_COLUMNS = {'ID': 40, '姓名': 140, '公司': 140, '职位': 100, '最近联系': 110}
+# 表头文案来自注册表，列宽是主界面的排版决定。
+_PEOPLE_COLUMNS = table_columns(
+    ('id', 40),
+    ('display_name', 140),
+    ('company', 140),
+    ('role', 100),
+    ('last_contact_at', 110),
+)
 
 
 class RekindleApp(tk.Tk):
@@ -85,37 +94,21 @@ class RekindleApp(tk.Tk):
 
         preview = ttk.LabelFrame(self, text='② 核对并确认（字段可改）')
         preview.pack(fill='x', padx=8, pady=4)
-        fields = (
-            ('姓名', self._name),
-            ('公司', self._company),
-            ('职位', self._role),
-            ('日期 ', self._when),
+        self._form_vars = {
+            'display_name': self._name,
+            'company': self._company,
+            'role': self._role,
+        }
+        # 字段顺序/标签/宽度来自注册表；「日期」是交往记录字段，作为窗口专属槽位。
+        self._form_widgets = build_grid(
+            preview,
+            ('display_name', 'company', 'role', ('日期', self._when, 26)),
+            self._form_vars,
         )
-        for index, (label, var) in enumerate(fields):
-            grid_row, grid_col = divmod(index, 2)
-            ttk.Label(preview, text=label).grid(
-                row=grid_row, column=grid_col * 2, sticky='e', padx=4, pady=3
-            )
-            ttk.Entry(preview, textvariable=var, width=26).grid(
-                row=grid_row, column=grid_col * 2 + 1, sticky='we', padx=4, pady=3
-            )
-        preview.columnconfigure(1, weight=1)
-        preview.columnconfigure(3, weight=1)
 
         contact = ttk.Frame(preview)
         contact.grid(row=2, column=0, columnspan=4, sticky='we', padx=4, pady=(2, 0))
-        for index, spec in enumerate(DEFAULT_FIELDS):
-            grid_row, grid_col = divmod(index, 2)
-            ttk.Label(contact, text=spec.label).grid(
-                row=grid_row, column=grid_col * 2, sticky='e', padx=4, pady=3
-            )
-            ttk.Entry(
-                contact, textvariable=self._field_vars[spec.key], width=26
-            ).grid(
-                row=grid_row, column=grid_col * 2 + 1, sticky='we', padx=4, pady=3
-            )
-        contact.columnconfigure(1, weight=1)
-        contact.columnconfigure(3, weight=1)
+        build_grid(contact, CONTACT_KEYS, self._field_vars)
 
         intro = ttk.Frame(preview)
         intro.grid(row=3, column=0, columnspan=4, sticky='we', padx=4, pady=3)
@@ -234,7 +227,7 @@ class RekindleApp(tk.Tk):
                 result = record.manual(
                     self._repo,
                     now=datetime.now(),
-                    name=self._name.get(),
+                    display_name=self._name.get(),
                     company=self._company.get(),
                     role=self._role.get(),
                     fields=fields,
@@ -245,7 +238,7 @@ class RekindleApp(tk.Tk):
                     self._repo,
                     capture_id,
                     now=datetime.now(),
-                    name=clean_optional(self._name.get()),
+                    display_name=clean_optional(self._name.get()),
                     company=clean_optional(self._company.get()),
                     role=clean_optional(self._role.get()),
                     fields=fields,

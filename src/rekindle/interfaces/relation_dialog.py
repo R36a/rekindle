@@ -15,6 +15,7 @@ from rekindle.app import record
 from rekindle.app import relations as relation_uc
 from rekindle.domain.errors import RekindleError
 from rekindle.domain.fields import DEFAULT_FIELDS
+from rekindle.domain.person_schema import CONTACT_KEYS
 from rekindle.domain.relations import (
     KIND_BY_LABEL,
     SELECTABLE_LABELS,
@@ -22,6 +23,7 @@ from rekindle.domain.relations import (
 )
 from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
+from rekindle.interfaces.forms import build_grid, table_columns
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.snapshot_guard import SnapshotGuard
 from rekindle.interfaces.ui import make_table
@@ -58,6 +60,11 @@ class RelationDialog(tk.Toplevel):
         self._field_vars = {
             spec.key: tk.StringVar() for spec in DEFAULT_FIELDS
         }
+        self._form_vars = {
+            'display_name': self._name_var,
+            'company': self._company,
+            'role': self._role,
+        }
         self._kind = tk.StringVar(value='朋友')
         self._note = tk.StringVar()
         self._status = tk.StringVar(
@@ -83,7 +90,9 @@ class RelationDialog(tk.Toplevel):
 
         self._candidates = make_table(
             choose,
-            {'姓名': 160, '公司': 240, '职位': 160},
+            table_columns(
+                ('display_name', 160), ('company', 240), ('role', 160)
+            ),
             height=7,
             padx=6,
             pady=(0, 6),
@@ -94,37 +103,14 @@ class RelationDialog(tk.Toplevel):
         create.pack(fill='x', padx=8, pady=4)
         top = ttk.Frame(create)
         top.pack(fill='x', padx=6, pady=(6, 0))
-        ttk.Label(top, text='姓名').pack(side='left')
-        ttk.Entry(top, textvariable=self._name_var, width=16).pack(
-            side='left', padx=4
-        )
-        ttk.Label(top, text='公司').pack(side='left', padx=(10, 0))
-        ttk.Entry(top, textvariable=self._company, width=20).pack(
-            side='left', padx=4
-        )
-        ttk.Label(top, text='职位').pack(side='left', padx=(10, 0))
-        ttk.Entry(top, textvariable=self._role, width=14).pack(
-            side='left', padx=4
+        # 标签与宽度来自注册表：姓名/公司/职位三项。
+        self._form_widgets = build_grid(
+            top, ('display_name', 'company', 'role'), self._form_vars
         )
 
         contact = ttk.Frame(create)
         contact.pack(fill='x', padx=6, pady=(4, 2))
-        for index, spec in enumerate(DEFAULT_FIELDS):
-            grid_row, grid_col = divmod(index, 2)
-            ttk.Label(contact, text=spec.label).grid(
-                row=grid_row, column=grid_col * 2, sticky='e', padx=4, pady=2
-            )
-            ttk.Entry(
-                contact, textvariable=self._field_vars[spec.key], width=20
-            ).grid(
-                row=grid_row,
-                column=grid_col * 2 + 1,
-                sticky='we',
-                padx=4,
-                pady=2,
-            )
-        contact.columnconfigure(1, weight=1)
-        contact.columnconfigure(3, weight=1)
+        build_grid(contact, CONTACT_KEYS, self._field_vars)
         ttk.Label(
             create, text='（选中上方联系人后，这里的内容会被忽略）'
         ).pack(anchor='w', padx=6, pady=(0, 4))
@@ -249,7 +235,7 @@ class RelationDialog(tk.Toplevel):
         result = record.manual(
             self._repo,
             now=now,
-            name=name,
+            display_name=name,
             company=self._company.get(),
             role=self._role.get(),
             fields=fields,

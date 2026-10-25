@@ -198,7 +198,7 @@ def create_app(
                 repo,
                 capture_id,
                 now=now,
-                name=body.name,
+                display_name=body.name,
                 company=body.company,
                 role=body.role,
                 fields=body.fields,
@@ -213,7 +213,7 @@ def create_app(
             record.manual(
                 repo,
                 now=now,
-                name=body.name,
+                display_name=body.name,
                 company=body.company,
                 role=body.role,
                 fields=body.fields,

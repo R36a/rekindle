@@ -12,7 +12,7 @@ import argparse
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from rekindle import __version__
 from rekindle.app import backup, queries, record
@@ -20,8 +20,8 @@ from rekindle.app import edit as edit_uc
 from rekindle.app.queries import PersonDetail
 from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError
-from rekindle.domain.fields import DEFAULT_FIELDS, FIELD_LABELS
 from rekindle.domain.models import ExtractedFields, Person
+from rekindle.domain.person_schema import CLI_FIELDS, CONTACT_FIELDS, Storage
 from rekindle.infra.snapshot import (
     create_snapshot,
     list_snapshots,
@@ -41,14 +41,43 @@ def _parse_date(value: str) -> date:
     return parsed
 
 
-def _add_contact_arguments(parser: argparse.ArgumentParser) -> None:
-    '''生成 --wechat / --qq / --email / --phone：字段只由 DEFAULT_FIELDS 定义一次。'''
-    for spec in DEFAULT_FIELDS:
-        parser.add_argument(
-            f'--{spec.key}',
-            action='append',
-            help=f'{spec.label}（可重复，追加不覆盖）',
+def _add_person_arguments(
+    parser: argparse.ArgumentParser, *, name_required: bool = False
+) -> None:
+    '''按字段注册表生成 CLI 参数：字段只在 person_schema 定义一次。'''
+    for field in CLI_FIELDS:
+        if field.storage is Storage.CONTACT:
+            parser.add_argument(
+                f'--{field.flag}',
+                action='append',
+                metavar=field.label,
+                help=f'{field.label}（可重复，追加不覆盖）',
+            )
+            continue
+        required = name_required and field.key == 'display_name'
+        help_text = (
+            f'{field.label}（必填）' if required else field.cli_help or field.label
         )
+        parser.add_argument(f'--{field.flag}', required=required, help=help_text)
+
+
+def _person_values(args: argparse.Namespace) -> dict[str, Any]:
+    '''把 CLI 参数还原成 record.manual / confirm 的入参（key 与注册表一致）。
+
+    返回 Any 是为了能 `**` 展开：字段清单由注册表决定，静态签名写不出来；
+    具体路径由 CLI 集成测试兜底（add / confirm 各有用例）。
+    '''
+    contact_values: dict[str, list[str]] = {}
+    values: dict[str, Any] = {}
+    for field in CLI_FIELDS:
+        raw = getattr(args, field.flag, None)
+        if field.storage is Storage.CONTACT:
+            if raw:
+                contact_values[field.key] = list(cast('list[str]', raw))
+        elif raw is not None:
+            values[field.key] = raw
+    values['fields'] = contact_values
+    return values
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,10 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser('confirm', parents=[common], help='确认草稿并入库')
     p.add_argument('capture_id', type=int)
-    p.add_argument('--name', help='姓名（抽不到时必填）')
-    p.add_argument('--company')
-    p.add_argument('--role')
-    _add_contact_arguments(p)
+    _add_person_arguments(p)
     p.add_argument(
         '--when',
         type=_parse_date,
@@ -84,10 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--new', action='store_true', dest='create_new', help='即使同名也新建')
 
     p = sub.add_parser('add', parents=[common], help='不写句子，直接按字段入库')
-    p.add_argument('--name', required=True, help='姓名（必填）')
-    p.add_argument('--company')
-    p.add_argument('--role')
-    _add_contact_arguments(p)
+    _add_person_arguments(p, name_required=True)
     p.add_argument(
         '--when',
         type=_parse_date,
@@ -156,12 +179,9 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
             repo,
             args.capture_id,
             now=now,
-            name=args.name,
-            company=args.company,
-            role=args.role,
-            fields=_contact_fields(args),
             occurred_on=args.occurred_on,
             create_new=args.create_new,
+            **_person_values(args),
         )
         action = '新建' if result.created_new else '合并到已有'
         print(f'已确认 → {result.person_name}（{action}，#{result.person_id}）')
@@ -171,11 +191,8 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
         result = record.manual(
             repo,
             now=now,
-            name=args.name,
-            company=args.company,
-            role=args.role,
-            fields=_contact_fields(args),
             occurred_on=args.occurred_on,
+            **_person_values(args),
         )
         action = '新建' if result.created_new else '合并到已有'
         print(f'已入库 → {result.person_name}（{action}，#{result.person_id}）')
@@ -247,16 +264,6 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
     return 2
 
 
-def _contact_fields(args: argparse.Namespace) -> dict[str, list[str]]:
-    '''联系方式：key 一律来自 DEFAULT_FIELDS，不再手写四份。'''
-    fields: dict[str, list[str]] = {}
-    for spec in DEFAULT_FIELDS:
-        values = cast('list[str] | None', getattr(args, spec.key, None))
-        if values:
-            fields[spec.key] = list(values)
-    return fields
-
-
 def _print_fields(parsed: ExtractedFields) -> None:
     print('姓名    :', parsed.display_name or '（未识别，确认时用 --name 指定）')
     print('公司    :', parsed.company or '-')
@@ -288,10 +295,10 @@ def _print_detail(detail: PersonDetail) -> None:
     if person.fields:
         print()
         print('联系方式：')
-        for key, label in FIELD_LABELS.items():
-            values = person.fields.get(key)
+        for field in CONTACT_FIELDS:
+            values = person.fields.get(field.key)
             if values:
-                print(f'  {label}：' + '、'.join(values))
+                print(f'  {field.label}：' + '、'.join(values))
 
     if person.companies:
         print()

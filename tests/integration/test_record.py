@@ -108,7 +108,7 @@ def test_确认时可以覆盖抽取字段(repo: SqliteRepo) -> None:
         repo,
         saved.capture_id,
         now=NOW,
-        name='李四',
+        display_name='李四',
         company='腾讯',
         occurred_on=date(2026, 10, 1),
     )
@@ -208,7 +208,7 @@ def test_不写句子也能入库(repo: SqliteRepo) -> None:
     result = record.manual(
         repo,
         now=NOW,
-        name='张三',
+        display_name='张三',
         company='字节',
         role='后端',
         fields={'wechat': ['wx1']},
@@ -227,7 +227,7 @@ def test_不写句子也能入库(repo: SqliteRepo) -> None:
 
 def test_手动入库必须有姓名(repo: SqliteRepo) -> None:
     with pytest.raises(MissingName):
-        record.manual(repo, now=NOW, name='   ')
+        record.manual(repo, now=NOW, display_name='   ')
 
     assert repo.export_all()['interaction'] == []
 
@@ -265,11 +265,11 @@ def test_丢弃后不能确认(repo: SqliteRepo) -> None:
 
 
 def test_补录更早的历史记录不会让最近联系回退(repo: SqliteRepo) -> None:
-    first = record.manual(repo, now=NOW, name='张三', occurred_on=date(2026, 10, 21))
-    record.manual(repo, now=NOW, name='李四', occurred_on=date(2026, 10, 20))
+    first = record.manual(repo, now=NOW, display_name='张三', occurred_on=date(2026, 10, 21))
+    record.manual(repo, now=NOW, display_name='李四', occurred_on=date(2026, 10, 20))
 
     # 再补一条更早的历史记录：最近联系仍是 10-21，列表顺序不能被打乱。
-    record.manual(repo, now=NOW, name='张三', occurred_on=date(2026, 1, 1))
+    record.manual(repo, now=NOW, display_name='张三', occurred_on=date(2026, 1, 1))
 
     person = repo.get_person(first.person_id)
     assert person is not None
@@ -304,7 +304,7 @@ def test_确认补录更早的历史记录不会让最近联系回退(repo: Sqli
 
 def test_姓名超长会被拒绝(repo: SqliteRepo) -> None:
     with pytest.raises(NameTooLong):
-        record.manual(repo, now=NOW, name='张' * (NAME_MAX_LENGTH + 1))
+        record.manual(repo, now=NOW, display_name='张' * (NAME_MAX_LENGTH + 1))
 
     assert repo.export_all()['person'] == []
 

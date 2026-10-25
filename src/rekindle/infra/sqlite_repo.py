@@ -32,7 +32,9 @@ from rekindle.domain.models import (
     Relation,
 )
 from rekindle.domain.normalize import normalize_name
+from rekindle.domain.person_schema import SEARCHABLE_FIELDS, Storage
 from rekindle.domain.relations import RelationKind
+from rekindle.infra.schema_sql import person_table_sql
 
 SCHEMA_VERSION = 7
 
@@ -52,18 +54,8 @@ _PERSON_FIELD_DDL = '''
 _PERSON_FIELD_INDEX = 'CREATE INDEX ix_person_field_value ON person_field(value)'
 
 _SCHEMA = (
-    '''
-    CREATE TABLE person (
-        id              INTEGER PRIMARY KEY,
-        display_name    TEXT    NOT NULL,
-        pinyin          TEXT    NOT NULL DEFAULT '',
-        initials        TEXT    NOT NULL DEFAULT '',
-        role            TEXT,
-        notes           TEXT,
-        last_contact_at TEXT,
-        archived        INTEGER NOT NULL DEFAULT 0
-    )
-    ''',
+    # person 表的列/类型/约束由 domain/person_schema.py 生成（唯一来源）。
+    person_table_sql(),
     '''
     CREATE TABLE person_company (
         person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
@@ -216,6 +208,40 @@ def _relation(row: sqlite3.Row) -> Relation:
         note=row['note'],
         created_at=datetime.fromisoformat(row['created_at']),
     )
+
+
+def _search_sql() -> str:
+    '''搜索条件：注册表里所有 searchable 字段 + 别名。
+
+    别名是独立实体（不是 Person 字段），单独补一条；其余按 storage 决定匹配方式。
+    哪些字段参与搜索只由 `person_schema.SEARCHABLE_FIELDS` 决定。
+    '''
+    clauses = [
+        'EXISTS (SELECT 1 FROM alias a WHERE a.person_id = p.id '
+        'AND a.text_norm LIKE :alias)'
+    ]
+    for field in SEARCHABLE_FIELDS:
+        if field.storage is Storage.COLUMN:
+            clauses.append(f"IFNULL(p.{field.key}, '') LIKE :like")
+        elif field.storage is Storage.COMPANY:
+            clauses.append(
+                'EXISTS (SELECT 1 FROM person_company c '
+                'WHERE c.person_id = p.id AND c.company LIKE :like)'
+            )
+    contact_keys = ', '.join(
+        f"'{field.key}'"
+        for field in SEARCHABLE_FIELDS
+        if field.storage is Storage.CONTACT
+    )
+    if contact_keys:
+        clauses.append(
+            'EXISTS (SELECT 1 FROM person_field f WHERE f.person_id = p.id '
+            f'AND f.field_key IN ({contact_keys}) AND f.value LIKE :like)'
+        )
+    return ' AND (' + ' OR '.join(clauses) + ') '
+
+
+_SEARCH_SQL = _search_sql()
 
 
 class SqliteRepo:
@@ -610,32 +636,24 @@ class SqliteRepo:
     def list_people(
         self, query: str = '', limit: int = DEFAULT_LIST_LIMIT
     ) -> list[Person]:
-        '''最近联系优先；搜索覆盖姓名、公司历史、职位、备注和别名。'''
+        '''最近联系优先；搜索字段与匹配方式由字段注册表生成（见 _SEARCH_SQL）。'''
         base = 'SELECT DISTINCT p.* FROM person p WHERE p.archived = 0 '
         order = (
             'ORDER BY p.last_contact_at IS NULL, p.last_contact_at DESC, p.id DESC '
-            'LIMIT ?'
+            'LIMIT :limit'
         )
         if query:
-            like = f'%{query}%'
-            # 别名存的是归一化文本（去掉敬称/空白），查询也要归一化后再比。
-            alias_like = f'%{normalize_name(query)}%'
             rows = self._conn.execute(
-                base
-                + 'AND (p.display_name LIKE ? '
-                "OR IFNULL(p.role, '') LIKE ? "
-                "OR IFNULL(p.notes, '') LIKE ? "
-                'OR EXISTS (SELECT 1 FROM alias a WHERE a.person_id = p.id '
-                'AND a.text_norm LIKE ?) '
-                'OR EXISTS (SELECT 1 FROM person_company c '
-                'WHERE c.person_id = p.id AND c.company LIKE ?) '
-                'OR EXISTS (SELECT 1 FROM person_field f '
-                'WHERE f.person_id = p.id AND f.value LIKE ?)) '
-                + order,
-                (like, like, like, alias_like, like, like, limit),
+                base + _SEARCH_SQL + order,
+                {
+                    # 别名存的是归一化文本（去掉敬称/空白），查询也要归一化后再比。
+                    'alias': f'%{normalize_name(query)}%',
+                    'like': f'%{query}%',
+                    'limit': limit,
+                },
             ).fetchall()
         else:
-            rows = self._conn.execute(base + order, (limit,)).fetchall()
+            rows = self._conn.execute(base + order, {'limit': limit}).fetchall()
         ids = [int(row['id']) for row in rows]
         companies = self._companies_for(ids)
         fields = self._fields_for(ids)

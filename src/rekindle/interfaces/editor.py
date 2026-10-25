@@ -14,9 +14,11 @@ from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS, merge_fields
 from rekindle.domain.limits import MAX_LIST_LIMIT
 from rekindle.domain.models import Interaction, Relation
+from rekindle.domain.person_schema import FIELD_BY_KEY
 from rekindle.domain.relations import RelationKind, label_of, rank_of
 from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
+from rekindle.interfaces.forms import build_grid, table_columns
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.relation_dialog import RelationDialog
 from rekindle.interfaces.snapshot_guard import SnapshotGuard
@@ -56,6 +58,7 @@ class PersonEditor(tk.Toplevel):
 
         self._name_var = tk.StringVar(value=person.display_name)
         self._role = tk.StringVar(value=person.role or '')
+        self._form_vars = {'display_name': self._name_var, 'role': self._role}
         self._company_date = tk.StringVar(value=date.today().isoformat())
         self._company_name = tk.StringVar()
         self._new_values: dict[str, tk.StringVar] = {
@@ -73,10 +76,8 @@ class PersonEditor(tk.Toplevel):
     def _build(self, notes: str) -> None:
         top = ttk.Frame(self)
         top.pack(fill='x', padx=8, pady=(8, 4))
-        ttk.Label(top, text='姓名').pack(side='left')
-        ttk.Entry(top, textvariable=self._name_var, width=18).pack(side='left', padx=4)
-        ttk.Label(top, text='职位').pack(side='left', padx=(12, 0))
-        ttk.Entry(top, textvariable=self._role, width=18).pack(side='left', padx=4)
+        # 标签与宽度来自注册表；编辑窗只显示姓名/职位两项。
+        self._form_widgets = build_grid(top, ('display_name', 'role'), self._form_vars)
 
         notes_frame = ttk.LabelFrame(self, text='备注')
         notes_frame.pack(fill='x', padx=8, pady=4)
@@ -103,7 +104,7 @@ class PersonEditor(tk.Toplevel):
         tab = ttk.Frame(book, padding=6)
         book.add(tab, text='公司历史')
         self._company_tree = make_table(
-            tab, {'日期': 130, '公司': 420}, height=6
+            tab, {'日期': 130, **table_columns(('company', 420))}, height=6
         )
         self._company_tree.bind('<<TreeviewSelect>>', self._pick_company)
 
@@ -113,7 +114,7 @@ class PersonEditor(tk.Toplevel):
         ttk.Entry(form, textvariable=self._company_date, width=14).pack(
             side='left', padx=4
         )
-        ttk.Label(form, text='公司').pack(side='left')
+        ttk.Label(form, text=FIELD_BY_KEY['company'].label).pack(side='left')
         ttk.Entry(form, textvariable=self._company_name, width=28).pack(
             side='left', padx=4
         )
@@ -171,7 +172,7 @@ class PersonEditor(tk.Toplevel):
         )
 
         self._relation_tree = make_table(
-            tab, {'姓名': 130, '关系': 90, '备注': 430}, height=8
+            tab, {**table_columns(('display_name', 130)), '关系': 90, '备注': 430}, height=8
         )
 
         buttons = ttk.Frame(tab)

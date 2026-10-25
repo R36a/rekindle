@@ -323,3 +323,8 @@ def test_关系对话框新建联系人(
     li = people['李四'].id or 0
     kinds = {relation.kind for relation in app._repo.list_relations(li)}
     assert kinds == {RelationKind.INTRODUCED, RelationKind.COLLEAGUE}
+
+
+def test_表单字段由注册表生成(app: Any) -> None:
+    # build_grid 返回的键就是字段 key：注册表改了，表单自动跟着变。
+    assert list(app._form_widgets) == ['display_name', 'company', 'role']

@@ -31,6 +31,22 @@
 - [ ] 增量迁移（**发布前**；开发期允许重置库，见「迁移策略」）
 - [ ] 明天做**（示例占位，待明确）
 
+## 字段注册表（2026-10-25 彻底重构）
+
+- [x] **`domain/person_schema.py` = 唯一字段定义**：`PersonField`（key/标签/存储方式/约束/可搜/摘要顺序/CLI/表单宽度），`PERSON_FIELDS` 一项声明
+- [x] **schema 由注册表生成**：新增 `infra/schema_sql.py`，`person` 表 DDL 不再手写（迁移脚本仍是显式历史）；有测试比对 `PRAGMA table_info` 与注册表逐列一致
+- [x] **搜索 SQL 由注册表生成**：`searchable=True` 的字段自动进 WHERE（列 / 公司历史 / 联系方式三种匹配方式），改字段不必记得改 SQL
+- [x] **CLI 参数由注册表生成**：`--name/--company/--role/--wechat…` 全部派生，`_person_values()` 把参数还原成 `record.*` 入参
+- [x] **摘要文本由注册表生成**：`_manual_summary` 按 `SUMMARY_FIELDS` 的顺序拼，不再手写「姓名→公司→职位→微信…」
+- [x] **表单由注册表生成**：新增 `interfaces/forms.build_grid`，主界面/编辑窗/关系对话框三处共用；标签宽度也只有一个来源
+- [x] **字段名统一**：`record.manual/confirm` 的参数由 `name` 改为 `display_name`（与 `Person` / 注册表一致），对外仍是 CLI `--name` 与 HTTP `name`
+- [x] **删 `FIELD_LABELS`**：无消费者后，`FIELD_KEYS` 直接从 `DEFAULT_FIELDS` 派生
+
+## 尚未做（有意保留）
+
+- [ ] **API 出入参**：`ManualIn/ConfirmIn/PersonOut` 仍逐字段手写——那是对外契约（`name` 别名、必填规则不同），且 `mypy --strict` 需要静态类型，动态 `create_model` 会失效
+- [ ] **迁移脚本**：v6→v7 这类历史步骤不能从当前注册表重算，保持显式
+
 ## 代码重复治理（2026-10-25 体检）
 
 - [x] **P0 `last_contact_at` 单一实现**：新增 `domain/dates.latest_contact`，record 合并与 edit 重算共用；修掉「补录更早的历史记录会让最近联系回退、列表排序错乱」

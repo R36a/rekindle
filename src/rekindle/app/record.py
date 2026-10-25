@@ -23,7 +23,7 @@ from rekindle.domain.errors import (
     EmptyCapture,
     PersonNotFound,
 )
-from rekindle.domain.fields import FIELD_LABELS, merge_fields, normalize_fields
+from rekindle.domain.fields import merge_fields, normalize_fields
 from rekindle.domain.limits import SUMMARY_MAX_LENGTH
 from rekindle.domain.models import (
     CaptureStatus,
@@ -31,6 +31,7 @@ from rekindle.domain.models import (
     Interaction,
     Person,
 )
+from rekindle.domain.person_schema import FIELD_BY_KEY, SUMMARY_FIELDS
 from rekindle.domain.text import clean_optional, require_name
 
 MANUAL_PREFIX = '用户输入了：'
@@ -75,7 +76,7 @@ def manual(
     repo: Repo,
     *,
     now: datetime,
-    name: str,
+    display_name: str,
     company: str | None = None,
     role: str | None = None,
     fields: dict[str, list[str]] | None = None,
@@ -83,9 +84,10 @@ def manual(
 ) -> ConfirmResult:
     '''没有原话时的入库：字段直接写库，记录文本自动生成。
 
-    姓名必填；日期默认「入库当天」，也可以在表单里改。
+    参数名与 `Person` / 字段注册表一致（`display_name`），只有 CLI 的 `--name`
+    和 HTTP body 的 `name` 是对外拼写。姓名必填；日期默认「入库当天」。
     '''
-    display_name = require_name(name)
+    name = require_name(display_name)
 
     resolved_company = clean_optional(company)
     resolved_role = clean_optional(role)
@@ -94,14 +96,14 @@ def manual(
 
     return _commit(
         repo,
-        display_name=display_name,
+        display_name=name,
         company=resolved_company,
         role=resolved_role,
         fields=extra_fields,
         occurred_at=occurred_at,
         now=now,
         summary=_manual_summary(
-            display_name,
+            name,
             occurred_at.date(),
             resolved_company,
             resolved_role,
@@ -115,7 +117,7 @@ def confirm(
     capture_id: int,
     *,
     now: datetime,
-    name: str | None = None,
+    display_name: str | None = None,
     company: str | None = None,
     role: str | None = None,
     fields: dict[str, list[str]] | None = None,
@@ -135,7 +137,7 @@ def confirm(
 
     parsed = capture.parsed or ExtractedFields()
     # 用户没给（None / 全空白）就用抽取结果；合法性只由 require_name 一处判。
-    display_name = require_name(clean_optional(name) or parsed.display_name)
+    name = require_name(clean_optional(display_name) or parsed.display_name)
 
     resolved_company = (
         clean_optional(company) if company is not None else clean_optional(parsed.company)
@@ -150,7 +152,7 @@ def confirm(
 
     return _commit(
         repo,
-        display_name=display_name,
+        display_name=name,
         company=resolved_company,
         role=resolved_role,
         fields=extra_fields,
@@ -265,16 +267,28 @@ def _manual_summary(
     role: str | None,
     fields: dict[str, list[str]],
 ) -> str:
-    '''没有原话时，把填过的字段写成一句可读的记录文本。'''
-    parts = [f'姓名：{name}', f'日期：{day.isoformat()}']
+    '''没有原话时，把填过的字段写成一句可读的记录文本。
+
+    有哪些字段、按什么顺序写，全部来自 `person_schema.SUMMARY_FIELDS`；
+    「日期」属于交往记录（不是 Person 字段），固定跟在姓名之后。
+    '''
+    values: dict[str, str] = {}
     if company:
-        parts.append(f'公司：{company}')
+        values['company'] = company
     if role:
-        parts.append(f'职位：{role}')
-    for key, label in FIELD_LABELS.items():
-        values = fields.get(key)
-        if values:
-            parts.append(f'{label}：' + '、'.join(values))
+        values['role'] = role
+    for key, items in fields.items():
+        values[key] = '、'.join(items)
+
+    parts = [
+        f'{FIELD_BY_KEY["display_name"].label}：{name}',
+        f'日期：{day.isoformat()}',
+    ]
+    parts.extend(
+        f'{field.label}：{values[field.key]}'
+        for field in SUMMARY_FIELDS
+        if field.key != 'display_name' and values.get(field.key)
+    )
     return MANUAL_PREFIX + '，'.join(parts)
 
 

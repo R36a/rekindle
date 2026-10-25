@@ -53,7 +53,7 @@
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 pip install -e ".[dev,llm,api]"
-pytest                          # 161 个测试，全离线
+pytest                          # 167 个测试，全离线
 
 # 1. 记一句话：只存草稿（capture），不入库
 python -m rekindle remember "上周和张三在字节工作，他做后端"
