@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from rekindle.domain.models import Permission, PermissionDenied, Settings
+from rekindle.domain.models import (
+    DEFAULT_SNAPSHOT_KEEP,
+    Permission,
+    PermissionDenied,
+    Settings,
+)
 
 
 def test_默认最小权限() -> None:
@@ -18,7 +23,7 @@ def test_默认最小权限() -> None:
 def test_存档默认开启() -> None:
     s = Settings()
     assert s.auto_snapshot is True
-    assert s.snapshot_keep == 30
+    assert s.snapshot_keep == DEFAULT_SNAPSHOT_KEEP
 
 
 def test_allows_返回对应开关() -> None:

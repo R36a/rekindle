@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 import tkinter as tk
 from collections.abc import Callable
 from datetime import date, datetime
@@ -21,9 +20,10 @@ from rekindle.domain.relations import (
     SELECTABLE_LABELS,
     RelationKind,
 )
-from rekindle.infra.snapshot import create_snapshot
+from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.inputs import split_values
+from rekindle.interfaces.snapshot_guard import SnapshotGuard
 
 _COLUMNS = ('姓名', '公司', '职位')
 
@@ -49,6 +49,7 @@ class RelationDialog(tk.Toplevel):
         self._repo = repo
         self._person_id = person_id
         self._on_saved = on_saved
+        self._snapshots = SnapshotGuard(repo.path)
         self._selected_id: int | None = None
 
         self._search = tk.StringVar()
@@ -211,7 +212,7 @@ class RelationDialog(tk.Toplevel):
             messagebox.showerror('关系类型不对', '请选择关系类型', parent=self)
             return
 
-        note = self._note.get().strip() or None
+        note = clean_optional(self._note.get())
         if self._selected_id is None and not self._name_var.get().strip():
             messagebox.showerror(
                 '缺少姓名',
@@ -219,10 +220,7 @@ class RelationDialog(tk.Toplevel):
                 parent=self,
             )
             return
-        try:
-            create_snapshot(self._repo.path)
-        except (OSError, sqlite3.Error) as exc:
-            messagebox.showerror('快照失败', f'未修改数据库：{exc}', parent=self)
+        if not self._snapshots.before_write(self):
             return
 
         now = datetime.now()

@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date
 
 from rekindle.app.ports import EditPort
-from rekindle.domain.errors import MissingName, PersonNotFound
+from rekindle.domain.dates import at_midnight, latest_contact
+from rekindle.domain.errors import PersonNotFound
+from rekindle.domain.fields import normalize_fields
 from rekindle.domain.models import Interaction, Person
+from rekindle.domain.text import clean_optional, require_name
 
 
 @dataclass(frozen=True)
@@ -27,26 +30,21 @@ def save_person(repo: EditPort, person_id: int, edit: PersonEdit) -> Person:
     person = repo.get_person(person_id)
     if person is None:
         raise PersonNotFound(person_id)
-    name = edit.display_name.strip()
-    if not name:
-        raise MissingName('姓名不能为空')
+    # 姓名合法性与 record 走同一个函数：model_copy 不跑校验，必须在这之前拦。
+    name = require_name(edit.display_name)
 
     companies = {
         day: company.strip()
         for day, company in edit.companies.items()
         if company.strip()
     }
-    cleaned_fields: dict[str, list[str]] = {}
-    for key, values in edit.fields.items():
-        cleaned = [value.strip() for value in values if value.strip()]
-        if cleaned:
-            cleaned_fields[key] = cleaned
+    cleaned_fields = normalize_fields(edit.fields)
 
     updated = person.model_copy(
         update={
             'display_name': name,
-            'role': (edit.role or '').strip() or None,
-            'notes': (edit.notes or '').strip() or None,
+            'role': clean_optional(edit.role),
+            'notes': clean_optional(edit.notes),
             'companies': companies,
             'fields': cleaned_fields,
         }
@@ -70,7 +68,7 @@ def save_interaction(
 
     updated = interaction.model_copy(
         update={
-            'occurred_at': datetime.combine(occurred_on, time.min),
+            'occurred_at': at_midnight(occurred_on),
             'summary': text[:500],
         }
     )
@@ -96,5 +94,12 @@ def _sync_last_contact(repo: EditPort, person_id: int) -> None:
     if person is None:
         return
     interactions = repo.list_interactions(person_id)
-    latest = max((item.occurred_at for item in interactions), default=None)
-    repo.update_person(person.model_copy(update={'last_contact_at': latest}))
+    repo.update_person(
+        person.model_copy(
+            update={
+                'last_contact_at': latest_contact(
+                    item.occurred_at for item in interactions
+                )
+            }
+        )
+    )

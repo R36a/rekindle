@@ -17,4 +17,8 @@ try {
 } finally {
     Pop-Location
 }
+$version = (& .\.venv\Scripts\python.exe -c "import rekindle; print(rekindle.__version__)" | Select-Object -Last 1).Trim()
+$versioned = Join-Path $root "dist\rekindle-v$version-win64.exe"
+Copy-Item -Force (Join-Path $root 'dist\rekindle.exe') $versioned
 Write-Host "`n已生成：$root\dist\rekindle.exe"
+Write-Host "已生成：$versioned"

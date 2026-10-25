@@ -31,6 +31,7 @@ from rekindle.domain.errors import (
     RelationExists,
 )
 from rekindle.domain.models import ExtractedFields, Interaction, Person
+from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 
@@ -55,7 +56,7 @@ class ConfirmIn(_Body):
 
 
 class ManualIn(_Body):
-    name: str = Field(min_length=1, max_length=20)
+    name: str = Field(min_length=1, max_length=NAME_MAX_LENGTH)
     company: str | None = None
     role: str | None = None
     fields: dict[str, list[str]] | None = None

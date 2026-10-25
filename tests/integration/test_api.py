@@ -97,3 +97,12 @@ def test_validation_rejects_blank_text_and_unknown_field(client: Any) -> None:
     assert client.post('/captures', json={'text': ''}).status_code == 422
     assert client.post('/captures', json={'text': 'x', 'oops': 1}).status_code == 422
     assert client.get('/people', params={'limit': 0}).status_code == 422
+
+
+def test_空白原话返回400而不是先生成草稿(client: Any) -> None:
+    # 以前：201 存下空白草稿，随后 confirm 才 500。现在入口就拒绝。
+    resp = client.post('/captures', json={'text': '   '})
+
+    assert resp.status_code == 400
+    assert '原话不能为空' in resp.json()['detail']
+    assert client.get('/people').json() == []

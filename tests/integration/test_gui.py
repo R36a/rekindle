@@ -42,6 +42,20 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     instance.destroy()
 
 
+def test_确认支持相对日期(app: Any) -> None:
+    app._text.insert('1.0', '和张三吃饭')
+    app.on_extract()
+    app._when.set('昨天')
+
+    app.on_confirm()
+
+    people = app._repo.list_people()
+    assert len(people) == 1
+    assert people[0].last_contact_at is not None
+    expected = (datetime.now() - timedelta(days=1)).date()
+    assert people[0].last_contact_at.date() == expected
+
+
 def test_识别后确认入库(app: Any) -> None:
     app._text.insert('1.0', '上周和张三在字节工作')
     app.on_extract()

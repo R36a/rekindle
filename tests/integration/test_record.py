@@ -7,8 +7,15 @@ from datetime import date, datetime
 import pytest
 
 from rekindle.app import record
-from rekindle.domain.errors import AlreadyConfirmed, CaptureNotFound, MissingName
+from rekindle.domain.errors import (
+    AlreadyConfirmed,
+    CaptureNotFound,
+    EmptyCapture,
+    MissingName,
+    NameTooLong,
+)
 from rekindle.domain.models import Person
+from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.sqlite_repo import SqliteRepo
 
 NOW = datetime(2026, 10, 22, 9, 0)
@@ -33,6 +40,18 @@ def test_确认后写入人脉与最近联系时间(repo: SqliteRepo) -> None:
     assert person.current_company == '字节'
     assert person.role == '后端'
     assert person.last_contact_at == datetime(2026, 10, 15)
+
+
+def test_确认会清洗公司与职位的首尾空白(repo: SqliteRepo) -> None:
+    saved = record.record(repo, '和张三吃饭', NOW)
+    result = record.confirm(
+        repo, saved.capture_id, now=NOW, company='  字节  ', role=' 后端 '
+    )
+
+    person = repo.get_person(result.person_id)
+    assert person is not None
+    assert person.current_company == '字节'
+    assert person.role == '后端'
 
 
 def test_重复确认只入库一次(repo: SqliteRepo) -> None:
@@ -243,3 +262,55 @@ def test_丢弃后不能确认(repo: SqliteRepo) -> None:
 
     with pytest.raises(AlreadyConfirmed):
         record.confirm(repo, saved.capture_id, now=NOW)
+
+
+def test_补录更早的历史记录不会让最近联系回退(repo: SqliteRepo) -> None:
+    first = record.manual(repo, now=NOW, name='张三', occurred_on=date(2026, 10, 21))
+    record.manual(repo, now=NOW, name='李四', occurred_on=date(2026, 10, 20))
+
+    # 再补一条更早的历史记录：最近联系仍是 10-21，列表顺序不能被打乱。
+    record.manual(repo, now=NOW, name='张三', occurred_on=date(2026, 1, 1))
+
+    person = repo.get_person(first.person_id)
+    assert person is not None
+    assert person.last_contact_at == datetime(2026, 10, 21)
+    assert [item.display_name for item in repo.list_people()] == ['张三', '李四']
+
+
+def test_确认补录更早的历史记录不会让最近联系回退(repo: SqliteRepo) -> None:
+    first = record.confirm(
+        repo,
+        record.record(repo, '和张三吃饭', NOW).capture_id,
+        now=NOW,
+        occurred_on=date(2026, 10, 21),
+    )
+    record.confirm(
+        repo,
+        record.record(repo, '和李四吃饭', NOW).capture_id,
+        now=NOW,
+        occurred_on=date(2026, 10, 20),
+    )
+    record.confirm(
+        repo,
+        record.record(repo, '上个月和张三吃饭', NOW).capture_id,
+        now=NOW,
+        occurred_on=date(2026, 1, 1),
+    )
+
+    person = repo.get_person(first.person_id)
+    assert person is not None
+    assert person.last_contact_at == datetime(2026, 10, 21)
+
+
+def test_姓名超长会被拒绝(repo: SqliteRepo) -> None:
+    with pytest.raises(NameTooLong):
+        record.manual(repo, now=NOW, name='张' * (NAME_MAX_LENGTH + 1))
+
+    assert repo.export_all()['person'] == []
+
+
+def test_空白原话不会被存成草稿(repo: SqliteRepo) -> None:
+    with pytest.raises(EmptyCapture):
+        record.record(repo, '   ', NOW)
+
+    assert repo.export_all()['capture'] == []

@@ -1,10 +1,14 @@
-'''默认属性字段：联系方式这类可扩展的信息。
+'''属性字段清单：联系方式这类可扩展的信息。
 
-字段由注册表（field 表）管理，这里只是初始四项；AI / 抽取只能在注册表内填值，
-不新增字段（见 docs/设计细节.md §9）。
+这里是字段集合的**唯一来源**（`FIELD_KEYS`）：UI、CLI 参数与仓储校验都从这份清单派生。
+以前还有一张 field 表存同样四项，但它的 label / type / description 没有任何读者，
+等于同一事实存两份、还会漂移（UI 认常量、仓储认表）——v7 起删表，只留这份常量。
+字段增删仍只由用户做，AI / 抽取只能在这份清单内填值（见 docs/设计细节.md §9）。
 '''
 
 from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
 
 from rekindle.domain.models import FieldSpec
 
@@ -16,3 +20,30 @@ DEFAULT_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 FIELD_LABELS: dict[str, str] = {field.key: field.label for field in DEFAULT_FIELDS}
+
+# 允许写入 person_field 的 key 集合：唯一来源就是上面的 DEFAULT_FIELDS。
+# 以前还有一张 field 表（含 label/type/description 列，无人读取）与外键，
+# 等于同一份事实存两处；现在校验只在仓储层用这个常量做。
+FIELD_KEYS: frozenset[str] = frozenset(FIELD_LABELS)
+
+
+def normalize_values(values: Iterable[str]) -> list[str]:
+    '''去空白、丢掉空值、去重，保持输入顺序。'''
+    cleaned: list[str] = []
+    for value in values:
+        text = value.strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def normalize_fields(
+    fields: Mapping[str, Iterable[str]] | None,
+) -> dict[str, list[str]]:
+    '''按字段规范化；规范化后为空的字段整个丢掉。'''
+    normalized: dict[str, list[str]] = {}
+    for key, values in (fields or {}).items():
+        cleaned = normalize_values(values)
+        if cleaned:
+            normalized[key] = cleaned
+    return normalized

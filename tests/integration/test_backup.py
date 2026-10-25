@@ -73,3 +73,25 @@ def test_不是本项目的文件会被拒绝(repo: SqliteRepo, tmp_path: Path) 
 
     with pytest.raises(BackupFormatError, match='不是 rekindle'):
         backup.import_from(repo, path)
+
+
+def test_导入未注册字段会被拒绝(repo: SqliteRepo, tmp_path: Path) -> None:
+    # 字段集合的唯一来源是 DEFAULT_FIELDS；备份里混进别的 key 会拒绝，
+    # 否则下次在界面保存时会被「整体替换」静默丢掉。
+    path = tmp_path / 'custom.json'
+    payload = {
+        'format': 'rekindle-backup',
+        'version': 4,
+        'tables': {
+            'person': [{'id': 1, 'display_name': '张三'}],
+            'person_field': [
+                {'person_id': 1, 'field_key': 'birthday', 'value': '10-01'}
+            ],
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    with pytest.raises(BackupFormatError, match='未注册'):
+        backup.import_from(repo, path)
+
+    assert repo.export_all()['person'] == []

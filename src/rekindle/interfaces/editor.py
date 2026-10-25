@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 import tkinter as tk
 from collections.abc import Callable
 from datetime import date, datetime
@@ -16,10 +15,11 @@ from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
 from rekindle.domain.models import Interaction, Relation
 from rekindle.domain.relations import RelationKind, label_of, rank_of
-from rekindle.infra.snapshot import create_snapshot
+from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.relation_dialog import RelationDialog
+from rekindle.interfaces.snapshot_guard import SnapshotGuard
 
 
 class PersonEditor(tk.Toplevel):
@@ -43,7 +43,7 @@ class PersonEditor(tk.Toplevel):
         self._repo = repo
         self._person_id = person_id
         self._on_saved = on_saved
-        self._snapshot_done = False
+        self._snapshots = SnapshotGuard(repo.path)
         self._companies = dict(person.companies)
         self._fields = {key: list(values) for key, values in person.fields.items()}
         for spec in DEFAULT_FIELDS:
@@ -500,7 +500,7 @@ class PersonEditor(tk.Toplevel):
         payload = edit_uc.PersonEdit(
             display_name=self._name_var.get(),
             role=self._role.get(),
-            notes=self._notes.get('1.0', 'end').strip() or None,
+            notes=clean_optional(self._notes.get('1.0', 'end')),
             companies=dict(self._companies),
             fields={key: list(values) for key, values in self._fields.items()},
         )
@@ -524,12 +524,4 @@ class PersonEditor(tk.Toplevel):
         self.destroy()
 
     def _snapshot_once(self) -> bool:
-        if self._snapshot_done:
-            return True
-        try:
-            create_snapshot(self._repo.path)
-        except (OSError, sqlite3.Error) as exc:
-            messagebox.showerror('快照失败', f'未修改数据库：{exc}', parent=self)
-            return False
-        self._snapshot_done = True
-        return True
+        return self._snapshots.before_write(self)

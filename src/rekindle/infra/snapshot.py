@@ -8,9 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 from rekindle.domain.errors import SnapshotVersionMismatch
+from rekindle.domain.models import DEFAULT_SNAPSHOT_KEEP
 from rekindle.infra.sqlite_repo import SCHEMA_VERSION
-
-DEFAULT_KEEP = 10
 
 
 @dataclass(frozen=True)
@@ -25,7 +24,7 @@ def snapshot_dir(db_path: Path) -> Path:
     return db_path.parent / 'snapshots'
 
 
-def create_snapshot(db_path: Path, keep: int = DEFAULT_KEEP) -> Path:
+def create_snapshot(db_path: Path, keep: int = DEFAULT_SNAPSHOT_KEEP) -> Path:
     '''用 SQLite 备份 API 复制一份，避免直接拷 WAL 文件漏数据。'''
     directory = snapshot_dir(db_path)
     directory.mkdir(parents=True, exist_ok=True)

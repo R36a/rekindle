@@ -31,6 +31,25 @@
 - [ ] 增量迁移（**发布前**；开发期允许重置库，见「迁移策略」）
 - [ ] 明天做**（示例占位，待明确）
 
+## 代码重复治理（2026-10-25 体检）
+
+- [x] **P0 `last_contact_at` 单一实现**：新增 `domain/dates.latest_contact`，record 合并与 edit 重算共用；修掉「补录更早的历史记录会让最近联系回退、列表排序错乱」
+- [x] **P0 字段集合单一来源**：删掉 `field` 注册表（schema v7，v6→v7 非破坏迁移），key 校验统一走 `domain/fields.FIELD_KEYS`；导入含未注册字段直接拒绝（修掉「编辑保存时静默丢自定义字段」）
+- [x] **P0 姓名校验单一实现**：`domain/text.require_name` + `NAME_MAX_LENGTH`，record / edit 共用（`model_copy` 不校验的老坑一并堵上）；空白原话在入口拒绝；CLI / GUI 入口统一捕获 `(RekindleError, ValueError)`
+- [x] **P0 日期输入统一**：GUI 主表单改用 `parse_date_input`，支持 今天/昨天/前天/上周（原来只认 ISO）
+- [x] **P0 可选文本清洗统一**：新增 `domain/text.clean_optional`，record / edit / GUI / 关系对话框共用
+- [x] **P1 联系方式规范化统一**：`record` 与 `edit` 共用 `domain/fields.normalize_fields`（去空白/去空值/去重）
+- [x] **P1 日期规则统一**：新增 `domain/dates.at_midnight` / `resolve_day`，record.manual / record.confirm / edit.save_interaction 共用
+- [x] **P1 写前快照策略统一**：新增 `interfaces/snapshot_guard.SnapshotGuard`，编辑窗口与关系对话框都改成「一次会话一次」
+- [x] **P1 修 `snapshot_keep` 冲突**：统一到 `domain/models.DEFAULT_SNAPSHOT_KEEP = 10`，infra 与 Settings 共用
+- [ ] **P2 `Settings.snapshot_dir` 与实现不一致**：Settings 写 `user_data/snapshots`，实际是「数据库同目录 / snapshots」，且未接入
+- [ ] **P1 常量集中**：`limit=50`（4 处）、`summary[:500]`（4 处）、`raw_text 2000`
+- [ ] **P1 `record.manual` / `record.confirm` 的提交块 20 行重复**：抽 `_commit`；顺带把「追加去重」合并到 `fields.normalize_values`
+- [ ] **P2 API DTO 复制 domain 模型**：`PersonOut` / `ConfirmOut` + 3 个 `_x_out` 逐字段搬运（64 行），用 `from_attributes` + `field_serializer`
+- [ ] **P2 人员展示格式统一**：`person_label`（gui / relation_dialog / editor 三种拼法）
+- [ ] **P2 UI 错误弹窗抽 helper**：4 个文件 20 处 `try/except + messagebox.showerror`
+- [ ] **P2 接口层三份重复**：介绍人下拉框（gui / editor）、Treeview+滚动条（6 处）、「日期解析+报错」（3 处）
+
 ## 已完成
 
 - [x] v0.3 收窄：移除提醒与待办（模型 / 表 / 命令 / GUI / 测试），旧库自动重建

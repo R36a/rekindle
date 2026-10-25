@@ -2,6 +2,11 @@
 
 放在 domain 而不是 app，是因为仓储层也要抛「已确认」之类的业务事实，
 而依赖方向只允许 interfaces → app → domain ← infra。
+
+接口层的统一边界：可预期的输入错误只有两族——本文件里的 RekindleError，
+以及 pydantic 的 ValidationError（它是 ValueError 子类，模型校验失败时抛）。
+CLI / GUI 捕获 `(RekindleError, ValueError)`，翻成中文提示 + 退出码/弹窗，
+不把回溯直接交给用户。
 '''
 
 from __future__ import annotations
@@ -25,6 +30,22 @@ class AlreadyConfirmed(RekindleError):
 
 class MissingName(RekindleError):
     '''姓名是唯一必需字段：抽不到且用户没给 → 不写库。'''
+
+
+class NameTooLong(RekindleError):
+    '''姓名超过模型允许的长度：写库前拦下，避免写进去读不出来。'''
+
+    def __init__(self, limit: int, actual: int) -> None:
+        super().__init__(f'姓名太长：最多 {limit} 个字，当前 {actual} 个')
+        self.limit = limit
+        self.actual = actual
+
+
+class EmptyCapture(RekindleError):
+    '''原话是空白：没有任何可记录的内容。'''
+
+    def __init__(self) -> None:
+        super().__init__('原话不能为空：没有可记录的内容')
 
 
 class PersonNotFound(RekindleError):

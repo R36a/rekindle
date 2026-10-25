@@ -10,15 +10,17 @@ import argparse
 import contextlib
 import sys
 import tkinter as tk
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from rekindle.app import queries, record
 from rekindle.app import relations as relation_uc
+from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
+from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 from rekindle.interfaces.editor import PersonEditor
@@ -200,7 +202,7 @@ class RekindleApp(tk.Tk):
                 self._repo.discard_capture(self._capture_id)
         try:
             saved = record.record(self._repo, text, datetime.now())
-        except RekindleError as exc:
+        except (RekindleError, ValueError) as exc:
             messagebox.showerror('识别失败', str(exc), parent=self)
             return
 
@@ -225,11 +227,14 @@ class RekindleApp(tk.Tk):
             return
 
         when_text = self._when.get().strip()
-        try:
-            occurred_on = date.fromisoformat(when_text) if when_text else None
-        except ValueError:
+        occurred_on = (
+            parse_date_input(when_text, datetime.now().date()) if when_text else None
+        )
+        if when_text and occurred_on is None:
             messagebox.showerror(
-                '日期格式不对', '日期用 YYYY-MM-DD，例如 2026-10-15', parent=self
+                '日期格式不对',
+                '日期用 YYYY-MM-DD，或 今天/昨天/前天/上周',
+                parent=self,
             )
             return
 
@@ -256,13 +261,13 @@ class RekindleApp(tk.Tk):
                     self._repo,
                     capture_id,
                     now=datetime.now(),
-                    name=self._name.get().strip() or None,
-                    company=self._company.get().strip() or None,
-                    role=self._role.get().strip() or None,
+                    name=clean_optional(self._name.get()),
+                    company=clean_optional(self._company.get()),
+                    role=clean_optional(self._role.get()),
                     fields=fields,
                     occurred_on=occurred_on,
                 )
-        except RekindleError as exc:
+        except (RekindleError, ValueError) as exc:
             messagebox.showerror('确认失败', str(exc), parent=self)
             return
 
@@ -278,7 +283,7 @@ class RekindleApp(tk.Tk):
                 )
             except RelationExists:
                 pass
-            except RekindleError as exc:
+            except (RekindleError, ValueError) as exc:
                 messagebox.showwarning(
                     '介绍关系未保存', str(exc), parent=self
                 )

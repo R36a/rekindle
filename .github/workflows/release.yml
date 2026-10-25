@@ -1,0 +1,64 @@
+# 打 tag（如 v0.1.0）→ 自动构建 Windows exe 并发布到 GitHub Releases。
+# 也可以手动触发（workflow_dispatch），此时只构建、不发布。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  build:
+    name: 构建并发布 Windows exe
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[build]"
+
+      - name: 校验 tag 与版本号一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = python -c "import rekindle; print(rekindle.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "tag ${{ github.ref_name }} 与 rekindle.__version__ ($version) 不一致"
+          }
+
+      - name: 打包
+        run: .\tools\build_exe.ps1
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: rekindle-windows
+          path: dist/rekindle.exe
+
+      - name: 重命名为带版本的文件名
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: Copy-Item dist\rekindle.exe "dist\rekindle-${{ github.ref_name }}-win64.exe"
+
+      - name: 发布到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/rekindle-*-win64.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: true

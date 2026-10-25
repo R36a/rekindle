@@ -12,6 +12,7 @@ from rekindle.app.ports import RelationPort
 from rekindle.domain.errors import InvalidRelation, PersonNotFound
 from rekindle.domain.models import Relation
 from rekindle.domain.relations import SELECTABLE_KINDS, RelationKind
+from rekindle.domain.text import clean_optional
 
 
 def add_relation(
@@ -33,7 +34,7 @@ def add_relation(
             person_a_id=person_a_id,
             person_b_id=person_b_id,
             kind=kind,
-            note=_clean_note(note),
+            note=clean_optional(note),
             created_at=now,
         )
     )
@@ -54,7 +55,7 @@ def add_introduction(
             person_a_id=introducer_id,
             person_b_id=introduced_id,
             kind=RelationKind.INTRODUCED,
-            note=_clean_note(note),
+            note=clean_optional(note),
             created_at=now,
         )
     )
@@ -72,7 +73,3 @@ def _validate_pair(repo: RelationPort, first: int, second: int) -> None:
     if repo.get_person(second) is None:
         raise PersonNotFound(second)
 
-
-def _clean_note(note: str | None) -> str | None:
-    text = (note or '').strip()
-    return text or None

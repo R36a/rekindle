@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
-from rekindle.domain.dates import parse_date_input
+from rekindle.domain.dates import at_midnight, parse_date_input, resolve_day
 
 TODAY = date(2026, 10, 22)
 
@@ -27,3 +27,13 @@ def test_去空白() -> None:
 def test_认不出来返回None() -> None:
     assert parse_date_input('不是日期', TODAY) is None
     assert parse_date_input('', TODAY) is None
+
+
+def test_日期转零点() -> None:
+    assert at_midnight(date(2026, 10, 22)) == datetime(2026, 10, 22, 0, 0)
+
+
+def test_取第一个非空日期() -> None:
+    assert resolve_day(TODAY, None, date(2026, 10, 20)) == date(2026, 10, 20)
+    assert resolve_day(TODAY, None, None) == TODAY
+

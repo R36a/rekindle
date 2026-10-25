@@ -12,23 +12,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime
 
 from rekindle.app.ports import RecordPort
 from rekindle.domain import extract_rule
+from rekindle.domain.dates import at_midnight, latest_contact, resolve_day
 from rekindle.domain.errors import (
     AlreadyConfirmed,
     CaptureNotFound,
-    MissingName,
+    EmptyCapture,
     PersonNotFound,
 )
-from rekindle.domain.fields import FIELD_LABELS
+from rekindle.domain.fields import FIELD_LABELS, normalize_fields
 from rekindle.domain.models import (
     CaptureStatus,
     ExtractedFields,
     Interaction,
     Person,
 )
+from rekindle.domain.text import clean_optional, require_name
 
 MANUAL_PREFIX = '用户输入了：'
 
@@ -50,14 +52,21 @@ class ConfirmResult:
 def record(repo: RecordPort, text: str, now: datetime) -> RecordedCapture:
     '''规则抽取并保存草稿。
 
+    原话先裁剪：模型读回来时本来就会被 strip（_StrictModel 的 str_strip_whitespace），
+    写入口先裁，库里的值与模型才一致。空白原话在这里就拒绝——写进去读不出来，
+    会让后续 confirm / 详情页抛校验错误。
+
     额外把已导入人脉的姓氏喂给规则：常见姓走内置表，罕见姓靠「线上已有的人」
     学出来——库里有「第五明」时，下次就能抽到「第五」。
     '''
-    parsed = extract_rule.extract(text, now.date(), repo.list_person_names())
-    if parsed.occurred_at is None:
-        # 日期字段默认今天；用户可在确认表单里改。
-        parsed.occurred_at = now.date()
-    capture_id = repo.add_capture(text, now, parsed)
+    raw_text = text.strip()
+    if not raw_text:
+        raise EmptyCapture()
+
+    parsed = extract_rule.extract(raw_text, now.date(), repo.list_person_names())
+    # 日期字段默认今天；用户可在确认表单里改。
+    parsed.occurred_at = resolve_day(now.date(), parsed.occurred_at)
+    capture_id = repo.add_capture(raw_text, now, parsed)
     return RecordedCapture(capture_id=capture_id, parsed=parsed)
 
 
@@ -75,14 +84,12 @@ def manual(
 
     姓名必填；日期默认「入库当天」，也可以在表单里改。
     '''
-    display_name = name.strip()
-    if not display_name:
-        raise MissingName('缺少姓名：姓名是必填字段')
+    display_name = require_name(name)
 
-    resolved_company = (company or '').strip() or None
-    resolved_role = (role or '').strip() or None
-    extra_fields = _normalize_fields(fields)
-    occurred_at = datetime.combine(occurred_on or now.date(), time.min)
+    resolved_company = clean_optional(company)
+    resolved_role = clean_optional(role)
+    extra_fields = normalize_fields(fields)
+    occurred_at = at_midnight(resolve_day(now.date(), occurred_on))
     summary = _manual_summary(
         display_name,
         occurred_at.date(),
@@ -142,21 +149,19 @@ def confirm(
         raise AlreadyConfirmed(capture_id)
 
     parsed = capture.parsed or ExtractedFields()
-    display_name = (name or parsed.display_name or '').strip()
-    if not display_name:
-        raise MissingName('缺少姓名：请用 --name 指定后重试')
+    # 用户没给（None / 全空白）就用抽取结果；合法性只由 require_name 一处判。
+    display_name = require_name(clean_optional(name) or parsed.display_name)
 
-    resolved_company = company if company is not None else parsed.company
-    resolved_role = role if role is not None else parsed.role
-    extra_fields = _normalize_fields(fields)
-    occurred_at = datetime.combine(occurred_on or parsed.occurred_at or now.date(), time.min)
-    summary = capture.raw_text.strip() or _manual_summary(
-        display_name,
-        occurred_at.date(),
-        resolved_company,
-        resolved_role,
-        extra_fields,
+    resolved_company = (
+        clean_optional(company) if company is not None else clean_optional(parsed.company)
     )
+    resolved_role = (
+        clean_optional(role) if role is not None else clean_optional(parsed.role)
+    )
+    extra_fields = normalize_fields(fields)
+    occurred_at = at_midnight(resolve_day(now.date(), occurred_on, parsed.occurred_at))
+    # 原话一定非空（record 入口已拦），记录文本就是原话本身。
+    summary = capture.raw_text.strip()
 
     with repo.transaction():
         person_id, person_name, created_new = _upsert_person(
@@ -185,22 +190,6 @@ def confirm(
         created_new=created_new,
         interaction_id=interaction_id,
     )
-
-
-def _normalize_fields(
-    fields: dict[str, list[str]] | None,
-) -> dict[str, list[str]]:
-    '''去掉空值、去重，保持输入顺序。'''
-    normalized: dict[str, list[str]] = {}
-    for key, values in (fields or {}).items():
-        cleaned: list[str] = []
-        for value in values:
-            text = value.strip()
-            if text and text not in cleaned:
-                cleaned.append(text)
-        if cleaned:
-            normalized[key] = cleaned
-    return normalized
 
 
 def _upsert_person(
@@ -246,7 +235,10 @@ def _upsert_person(
                 'companies': companies,
                 'fields': merged_fields,
                 'role': role or existing.role,
-                'last_contact_at': occurred_at,
+                # 补录历史记录不能把「最近联系」改早：规则只有 latest_contact 一处。
+                'last_contact_at': latest_contact(
+                    (existing.last_contact_at, occurred_at)
+                ),
             }
         )
     )

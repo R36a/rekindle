@@ -132,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with SqliteRepo(Path(args.db)) as repo:
             return _run(args, repo, now)
-    except RekindleError as exc:
+    # 边界见 domain/errors.py 顶部：可预期错误 = RekindleError 或 pydantic 的 ValidationError。
+    except (RekindleError, ValueError) as exc:
         print(f'错误：{exc}', file=sys.stderr)
         return 1
 

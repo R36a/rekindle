@@ -18,6 +18,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rekindle.domain.relations import RelationKind
+from rekindle.domain.text import NAME_MAX_LENGTH
 
 
 class CaptureStatus(StrEnum):
@@ -45,7 +46,9 @@ class _StrictModel(BaseModel):
 class ExtractedFields(_StrictModel):
     '''从一句话里抽出来的字段（规则或 LLM 的产物）。'''
 
-    display_name: str | None = Field(default=None, min_length=1, max_length=20)
+    display_name: str | None = Field(
+        default=None, min_length=1, max_length=NAME_MAX_LENGTH
+    )
     company: str | None = None
     role: str | None = None
     occurred_at: date | None = None
@@ -66,7 +69,7 @@ class Person(_StrictModel):
     '''一个人。'''
 
     id: int | None = None
-    display_name: str = Field(min_length=1, max_length=20)
+    display_name: str = Field(min_length=1, max_length=NAME_MAX_LENGTH)
     pinyin: str = ''
     initials: str = ''
     companies: dict[date, str] = Field(default_factory=dict)  # 日期 -> 公司
@@ -120,7 +123,7 @@ class Relation(_StrictModel):
 
 
 class Capture(_StrictModel):
-    '''一条原始输入。raw_text 永远保存用户原话，不改写。'''
+    '''一条原始输入。raw_text 就是用户原话本身，只在入口裁掉首尾空白。'''
 
     id: int | None = None
     raw_text: str = Field(min_length=1, max_length=2000)
@@ -161,6 +164,10 @@ class PermissionDenied(RuntimeError):
         self.perm = perm
 
 
+# 快照保留份数：domain 定义，infra 与 Settings 共用（单一来源）。
+DEFAULT_SNAPSHOT_KEEP = 10
+
+
 class Settings(_StrictModel):
     '''用户设置。AI 权限默认最小（全部关闭）。'''
 
@@ -171,7 +178,7 @@ class Settings(_StrictModel):
 
     auto_snapshot: bool = True
     auto_snapshot_frequency: str = 'on_exit'   # on_startup / daily / on_exit
-    snapshot_keep: int = Field(default=30, ge=1, le=1000)
+    snapshot_keep: int = Field(default=DEFAULT_SNAPSHOT_KEEP, ge=1, le=1000)
     snapshot_dir: str = 'user_data/snapshots'
 
     def allows(self, perm: Permission) -> bool:

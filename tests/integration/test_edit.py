@@ -8,7 +8,8 @@ from datetime import date, datetime
 import pytest
 
 from rekindle.app import edit, record
-from rekindle.domain.errors import MissingName, SnapshotVersionMismatch
+from rekindle.domain.errors import MissingName, NameTooLong, SnapshotVersionMismatch
+from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.snapshot import (
     create_snapshot,
     list_snapshots,
@@ -25,6 +26,26 @@ def _seed(repo: SqliteRepo) -> int:
         repo, saved.capture_id, now=NOW, fields={'wechat': ['wx1']}
     )
     return result.person_id
+
+
+def test_保存人物会去重联系方式(repo: SqliteRepo) -> None:
+    person_id = _seed(repo)
+
+    edit.save_person(
+        repo,
+        person_id,
+        edit.PersonEdit(
+            display_name='张三',
+            role=None,
+            notes=None,
+            companies={},
+            fields={'wechat': [' wx1 ', 'wx1', '', 'wx2']},
+        ),
+    )
+
+    person = repo.get_person(person_id)
+    assert person is not None
+    assert person.fields == {'wechat': ['wx1', 'wx2']}
 
 
 def test_编辑资料(repo: SqliteRepo) -> None:
@@ -63,6 +84,28 @@ def test_姓名不能为空(repo: SqliteRepo) -> None:
             person_id,
             edit.PersonEdit('  ', None, None, {}, {}),
         )
+
+
+def test_编辑姓名超长会被拒绝且不写库(repo: SqliteRepo) -> None:
+    # model_copy(update=...) 不跑校验：长度必须在写库前拦，否则写进去读不出来。
+    person_id = _seed(repo)
+
+    with pytest.raises(NameTooLong):
+        edit.save_person(
+            repo,
+            person_id,
+            edit.PersonEdit(
+                display_name='张' * (NAME_MAX_LENGTH + 1),
+                role=None,
+                notes=None,
+                companies={},
+                fields={},
+            ),
+        )
+
+    person = repo.get_person(person_id)
+    assert person is not None
+    assert person.display_name == '张三'
 
 
 def test_修改交往记录的日期和内容(repo: SqliteRepo) -> None:

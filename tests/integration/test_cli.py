@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.cli import main
 
@@ -57,7 +58,32 @@ def test_没有姓名时提示并返回1(tmp_path: Path, capsys: pytest.CaptureF
     capsys.readouterr()
 
     assert main(['confirm', '1', '--db', db]) == 1
-    assert '--name' in capsys.readouterr().err
+    assert '姓名' in capsys.readouterr().err
+
+
+def test_姓名超长给出中文提示而不是回溯(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = str(tmp_path / 'cli.db')
+    too_long = '张' * (NAME_MAX_LENGTH + 1)
+
+    assert main(['add', '--name', too_long, '--db', db]) == 1
+
+    captured = capsys.readouterr()
+    assert '姓名太长' in captured.err
+    assert 'Traceback' not in captured.err
+    with SqliteRepo(db) as repo:
+        assert repo.list_people() == []
+
+
+def test_空白原话被拒绝(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db = str(tmp_path / 'cli.db')
+
+    assert main(['remember', '   ', '--db', db]) == 1
+    assert '原话不能为空' in capsys.readouterr().err
+
+    with SqliteRepo(db) as repo:
+        assert repo.export_all()['capture'] == []
 
 
 def test_导出后导入空库(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

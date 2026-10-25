@@ -20,7 +20,7 @@ from rekindle.domain.errors import (
     RelationExists,
     RelationNotFound,
 )
-from rekindle.domain.fields import DEFAULT_FIELDS
+from rekindle.domain.fields import FIELD_KEYS
 from rekindle.domain.models import (
     Capture,
     CaptureStatus,
@@ -33,10 +33,23 @@ from rekindle.domain.models import (
 from rekindle.domain.normalize import normalize_name
 from rekindle.domain.relations import RelationKind
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
-# person_relation.kind 的取值与 domain/relations.py 的 RelationKind 同步；
-# 以后允许自定义类型时，改成 relation_kind 表并做 v7 迁移。
+# 关系类型的取值与 domain/relations.py 的 RelationKind 同步（DB 只做兜底 CHECK）；
+# 以后允许自定义类型时，改成 relation_kind 表并做下一次迁移。
+
+# 属性字段表：迁移时也要按同一份 DDL 重建，所以单独命名，避免两处写成两份。
+# field_key 不加外键：字段集合的唯一来源是 domain/fields.DEFAULT_FIELDS（FIELD_KEYS）。
+_PERSON_FIELD_DDL = '''
+    CREATE TABLE person_field (
+        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        field_key TEXT    NOT NULL,
+        value     TEXT    NOT NULL,
+        PRIMARY KEY (person_id, field_key, value)
+    )
+    '''
+_PERSON_FIELD_INDEX = 'CREATE INDEX ix_person_field_value ON person_field(value)'
+
 _SCHEMA = (
     '''
     CREATE TABLE person (
@@ -59,24 +72,8 @@ _SCHEMA = (
     )
     ''',
     'CREATE INDEX ix_person_company_name ON person_company(company)',
-    '''
-    CREATE TABLE field (
-        key         TEXT PRIMARY KEY,
-        label       TEXT NOT NULL,
-        field_type  TEXT NOT NULL DEFAULT 'text',
-        description TEXT NOT NULL DEFAULT '',
-        builtin     INTEGER NOT NULL DEFAULT 0
-    )
-    ''',
-    '''
-    CREATE TABLE person_field (
-        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
-        field_key TEXT    NOT NULL REFERENCES field(key) ON DELETE CASCADE,
-        value     TEXT    NOT NULL,
-        PRIMARY KEY (person_id, field_key, value)
-    )
-    ''',
-    'CREATE INDEX ix_person_field_value ON person_field(value)',
+    _PERSON_FIELD_DDL,
+    _PERSON_FIELD_INDEX,
     '''
     CREATE TABLE alias (
         id        INTEGER PRIMARY KEY,
@@ -255,19 +252,36 @@ class SqliteRepo:
                 f'数据库版本 {version} 高于程序支持的 {SCHEMA_VERSION}，请升级 rekindle'
             )
         with self.transaction():
-            if version:
+            if version == 6:
+                # v6 → v7 只删字段注册表：已经发布过的库必须保住数据。
+                self._drop_field_registry()
+            else:
+                # 开发期策略（TODO「迁移策略」）：v6 以外的旧库直接重建。
                 for table in _LEGACY_TABLES:
                     self._conn.execute(f'DROP TABLE IF EXISTS {table}')
-            for statement in _SCHEMA:
-                self._conn.execute(statement)
-            for spec in DEFAULT_FIELDS:
-                self._conn.execute(
-                    'INSERT OR IGNORE INTO field '
-                    '(key, label, field_type, description, builtin) '
-                    'VALUES (?, ?, ?, ?, 1)',
-                    (spec.key, spec.label, spec.field_type, spec.description),
-                )
+                self._create_schema()
             self._conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
+
+    def _create_schema(self) -> None:
+        for statement in _SCHEMA:
+            self._conn.execute(statement)
+
+    def _drop_field_registry(self) -> None:
+        '''v6 → v7：去掉只承担外键的 field 表，属性字段的值原样保留。
+
+        field 表里的 label / field_type / description / builtin 从来没有读者，
+        等于把「有哪些字段」这条事实存了两份（另一份是 DEFAULT_FIELDS）。
+        现在唯一来源是 domain/fields.py；person_field 按同一份 DDL 重建。
+        '''
+        self._conn.execute('ALTER TABLE person_field RENAME TO person_field_v6')
+        self._conn.execute(_PERSON_FIELD_DDL)
+        self._conn.execute(
+            'INSERT INTO person_field (person_id, field_key, value) '
+            'SELECT person_id, field_key, value FROM person_field_v6'
+        )
+        self._conn.execute('DROP TABLE person_field_v6')  # 连带删掉旧索引
+        self._conn.execute(_PERSON_FIELD_INDEX)
+        self._conn.execute('DROP TABLE IF EXISTS field')
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -437,11 +451,8 @@ class SqliteRepo:
     def _replace_fields(
         self, person_id: int, fields: dict[str, list[str]]
     ) -> None:
-        '''整体替换属性字段；只接受注册表里存在的 key。'''
-        allowed = {
-            str(row['key']) for row in self._conn.execute('SELECT key FROM field')
-        }
-        unknown = set(fields) - allowed
+        '''整体替换属性字段；只接受 DEFAULT_FIELDS（FIELD_KEYS）里的 key。'''
+        unknown = set(fields) - FIELD_KEYS
         if unknown:
             raise ValueError(f'未注册的字段：{sorted(unknown)}')
         self._conn.execute(
@@ -668,6 +679,17 @@ class SqliteRepo:
         if count > 0:
             raise ImportTargetNotEmpty('目标库不是空库，导入已取消')
         with self.transaction():
+            # 属性字段的 key 只允许 DEFAULT_FIELDS 里的：混进来会在下次保存时被
+            # 「整体替换」静默丢掉，所以导入阶段就拒绝，而不是等丢数据。
+            field_keys = {
+                str(row.get('field_key'))
+                for row in tables.get('person_field', [])
+            }
+            unknown_keys = field_keys - FIELD_KEYS
+            if unknown_keys:
+                raise BackupFormatError(
+                    f'person_field 出现未注册的字段：{sorted(unknown_keys)}'
+                )
             for table in _TABLES:
                 allowed = {
                     str(r['name'])

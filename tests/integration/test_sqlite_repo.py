@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -48,3 +49,60 @@ def test_同一capture不能写两条interaction(repo: SqliteRepo) -> None:
 
     with pytest.raises(AlreadyConfirmed):
         repo.add_interaction(interaction.model_copy(update={'id': None}))
+
+
+def test_v6库升级保留属性字段并删掉注册表(tmp_path: Path) -> None:
+    path = tmp_path / 'v6.db'
+    SqliteRepo(path).close()  # 先得到 v7 的 person 等基础表
+
+    # 把 person_field 还原成 v6 形状（带 field 外键），模拟已发布的 v0.1.0 数据库。
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(
+            '''
+            DROP TABLE person_field;
+            CREATE TABLE field (
+                key         TEXT PRIMARY KEY,
+                label       TEXT NOT NULL,
+                field_type  TEXT NOT NULL DEFAULT 'text',
+                description TEXT NOT NULL DEFAULT '',
+                builtin     INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE person_field (
+                person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+                field_key TEXT    NOT NULL REFERENCES field(key) ON DELETE CASCADE,
+                value     TEXT    NOT NULL,
+                PRIMARY KEY (person_id, field_key, value)
+            );
+            CREATE INDEX ix_person_field_value ON person_field(value);
+            INSERT INTO person (id, display_name) VALUES (1, '张三');
+            INSERT INTO field (key, label) VALUES ('wechat', '微信');
+            INSERT INTO person_field (person_id, field_key, value)
+                VALUES (1, 'wechat', 'wx1');
+            PRAGMA user_version = 6;
+            '''
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    migrated = SqliteRepo(path)
+    try:
+        assert migrated.schema_version == SCHEMA_VERSION
+        person = migrated.get_person(1)
+        assert person is not None
+        assert person.fields == {'wechat': ['wx1']}
+    finally:
+        migrated.close()
+
+    check = sqlite3.connect(path)
+    try:
+        tables = {
+            str(row[0])
+            for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    finally:
+        check.close()
+    assert 'field' not in tables
