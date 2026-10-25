@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import date, timedelta
 
-from rekindle.domain.dates import RELATIVE_DAYS, RELATIVE_ORDER
+from rekindle.domain.dates import RELATIVE_DAYS
 from rekindle.domain.models import ExtractedFields, ExtractSource
 from rekindle.domain.surnames import BIG_SURNAMES, SMALL_SURNAMES, surname_length
 
@@ -137,9 +137,9 @@ def extract_role(text: str) -> str | None:
 
 
 def extract_date(text: str, today: date) -> date | None:
-    for keyword in RELATIVE_ORDER:
+    for keyword, offset in RELATIVE_DAYS.items():
         if keyword in text:
-            return today + timedelta(days=RELATIVE_DAYS[keyword])
+            return today + timedelta(days=offset)
     return None
 
 

@@ -30,6 +30,11 @@ from rekindle.domain.errors import (
     RekindleError,
     RelationExists,
 )
+from rekindle.domain.limits import (
+    DEFAULT_LIST_LIMIT,
+    MAX_LIST_LIMIT,
+    RAW_TEXT_MAX_LENGTH,
+)
 from rekindle.domain.models import ExtractedFields, Interaction, Person
 from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.sqlite_repo import SqliteRepo
@@ -43,7 +48,7 @@ class _Body(BaseModel):
 
 
 class CaptureIn(_Body):
-    text: str = Field(min_length=1, max_length=2000)
+    text: str = Field(min_length=1, max_length=RAW_TEXT_MAX_LENGTH)
 
 
 class ConfirmIn(_Body):
@@ -220,7 +225,7 @@ def create_app(
     def list_people(
         repo: RepoDep,
         query: str = '',
-        limit: Annotated[int, Query(ge=1, le=500)] = 50,
+        limit: Annotated[int, Query(ge=1, le=MAX_LIST_LIMIT)] = DEFAULT_LIST_LIMIT,
     ) -> list[PersonOut]:
         return [_person_out(person) for person in queries.list_people(repo, query, limit)]
 

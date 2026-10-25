@@ -1,6 +1,10 @@
 '''端口（开发文档 §5.2 的 seam）。
 
-app 只认这里的协议；真实实现是 infra/sqlite_repo.py，测试里用临时 sqlite。
+app 只认这里的协议；唯一实现是 infra/sqlite_repo.py，测试也用真实临时 sqlite。
+
+以前按用例拆成 5 个 Protocol（RecordPort / QueryPort / EditPort / BackupPort /
+RelationPort），每个都把 `get_person`、`update_person`、`list_interactions` 的签名
+再抄一遍：改一个签名要改 4 处，而替代实现始终是 0 个。现在收敛成一个 `Repo`。
 方法宁可少一点，也不要为「以后可能用到」提前加。
 '''
 
@@ -10,16 +14,24 @@ from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Protocol
 
-from rekindle.domain.models import Capture, ExtractedFields, Interaction, Person, Relation
+from rekindle.domain.limits import DEFAULT_LIST_LIMIT
+from rekindle.domain.models import (
+    Capture,
+    ExtractedFields,
+    Interaction,
+    Person,
+    Relation,
+)
 
 
-class RecordPort(Protocol):
-    '''写入一条记录所需的全部存储操作。'''
+class Repo(Protocol):
+    '''app 层需要的全部存储能力：读写人、记录、关系与整库备份。'''
 
     def transaction(self) -> AbstractContextManager[None]:
         '''把多个写操作合成一个事务；不可嵌套。'''
         ...
 
+    # ---------- 原始输入 ----------
     def add_capture(
         self, raw_text: str, created_at: datetime, parsed: ExtractedFields
     ) -> int: ...
@@ -28,8 +40,7 @@ class RecordPort(Protocol):
 
     def confirm_capture(self, capture_id: int, person_id: int) -> None: ...
 
-    def discard_capture(self, capture_id: int) -> None: ...
-
+    # ---------- 人 ----------
     def find_person_by_alias(self, text: str) -> Person | None: ...
 
     def find_person_by_name(self, name: str) -> Person | None: ...
@@ -40,31 +51,18 @@ class RecordPort(Protocol):
 
     def update_person(self, person: Person) -> None: ...
 
-    def add_alias(self, person_id: int, text: str) -> None: ...
+    def archive_person(self, person_id: int) -> None: ...
 
-    def add_interaction(self, interaction: Interaction) -> int: ...
+    def list_people(
+        self, query: str = '', limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[Person]: ...
 
     def list_person_names(self) -> list[str]:
         '''所有未归档人的姓名，用来学习罕见姓氏。'''
         ...
 
-
-class QueryPort(Protocol):
-    '''只读查询。'''
-
-    def get_person(self, person_id: int) -> Person | None: ...
-
-    def list_people(self, query: str = '', limit: int = 50) -> list[Person]: ...
-
-    def list_interactions(self, person_id: int) -> list[Interaction]: ...
-
-
-class EditPort(Protocol):
-    '''应用内编辑所需的读写能力。'''
-
-    def get_person(self, person_id: int) -> Person | None: ...
-
-    def update_person(self, person: Person) -> None: ...
+    # ---------- 交往记录 ----------
+    def add_interaction(self, interaction: Interaction) -> int: ...
 
     def list_interactions(self, person_id: int) -> list[Interaction]: ...
 
@@ -72,24 +70,13 @@ class EditPort(Protocol):
 
     def delete_interaction(self, interaction_id: int) -> None: ...
 
-    def archive_person(self, person_id: int) -> None: ...
+    # ---------- 关系 ----------
+    def add_relation(self, relation: Relation) -> int: ...
 
+    def delete_relation(self, relation_id: int) -> None: ...
 
-class BackupPort(Protocol):
-    '''整库导出 / 导入（JSON 是权威备份格式）。'''
-
+    # ---------- 备份 ----------
     def export_all(self) -> dict[str, list[dict[str, object]]]: ...
 
     def import_all(self, tables: dict[str, list[dict[str, object]]]) -> None: ...
 
-
-class RelationPort(Protocol):
-    '''人与人之间的关系边。'''
-
-    def get_person(self, person_id: int) -> Person | None: ...
-
-    def add_relation(self, relation: Relation) -> int: ...
-
-    def list_relations(self, person_id: int) -> list[Relation]: ...
-
-    def delete_relation(self, relation_id: int) -> None: ...

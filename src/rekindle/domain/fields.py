@@ -47,3 +47,18 @@ def normalize_fields(
         if cleaned:
             normalized[key] = cleaned
     return normalized
+
+
+def merge_fields(
+    existing: Mapping[str, Iterable[str]],
+    incoming: Mapping[str, Iterable[str]],
+) -> dict[str, list[str]]:
+    '''把 incoming 追加进 existing：同 key 合并、去重、保持顺序。
+
+    新增联系方式的唯一实现：record 合并已有人、编辑窗「添加」都走这里，
+    不再各自写一遍 `if value not in values: values.append(value)`。
+    '''
+    merged = normalize_fields(existing)
+    for key, values in incoming.items():
+        merged[key] = normalize_values([*merged.get(key, []), *values])
+    return {key: values for key, values in merged.items() if values}

@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from rekindle.app.ports import BackupPort
+from rekindle.app.ports import Repo
 from rekindle.domain.errors import BackupFormatError
 
 EXPORT_FORMAT = 'rekindle-backup'
@@ -18,7 +18,7 @@ EXPORT_VERSION = 4
 SUPPORTED_VERSIONS = (3, EXPORT_VERSION)
 
 
-def export_to(repo: BackupPort, path: str | Path, now: datetime) -> Path:
+def export_to(repo: Repo, path: str | Path, now: datetime) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -34,7 +34,7 @@ def export_to(repo: BackupPort, path: str | Path, now: datetime) -> Path:
     return target
 
 
-def import_from(repo: BackupPort, path: str | Path) -> int:
+def import_from(repo: Repo, path: str | Path) -> int:
     '''返回导入的 person 条数（便于 CLI 报告结果）。'''
     data = json.loads(Path(path).read_text(encoding='utf-8'))
     if not isinstance(data, dict) or data.get('format') != EXPORT_FORMAT:

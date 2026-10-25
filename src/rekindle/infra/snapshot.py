@@ -8,8 +8,21 @@ from datetime import datetime
 from pathlib import Path
 
 from rekindle.domain.errors import SnapshotVersionMismatch
-from rekindle.domain.models import DEFAULT_SNAPSHOT_KEEP
 from rekindle.infra.sqlite_repo import SCHEMA_VERSION
+
+# 快照保留份数：只有一个消费者（create_snapshot），不再跨层共用。
+DEFAULT_SNAPSHOT_KEEP = 10
+
+
+def _copy_database(source: Path, target: Path) -> None:
+    '''用 SQLite 备份 API 复制：直接拷文件会漏掉 WAL 里的数据。'''
+    source_conn = sqlite3.connect(source)
+    target_conn = sqlite3.connect(target)
+    try:
+        source_conn.backup(target_conn)
+    finally:
+        target_conn.close()
+        source_conn.close()
 
 
 @dataclass(frozen=True)
@@ -25,18 +38,12 @@ def snapshot_dir(db_path: Path) -> Path:
 
 
 def create_snapshot(db_path: Path, keep: int = DEFAULT_SNAPSHOT_KEEP) -> Path:
-    '''用 SQLite 备份 API 复制一份，避免直接拷 WAL 文件漏数据。'''
+    '''复制一份数据库（含 WAL 里尚未落盘的数据），并按 keep 清理旧快照。'''
     directory = snapshot_dir(db_path)
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     target = directory / f'rekindle-{stamp}.db'
-    source = sqlite3.connect(db_path)
-    dest = sqlite3.connect(target)
-    try:
-        source.backup(dest)
-    finally:
-        dest.close()
-        source.close()
+    _copy_database(db_path, target)
     _prune(directory, keep)
     return target
 
@@ -81,13 +88,7 @@ def restore_snapshot(db_path: Path, snapshot_path: Path) -> Path:
 
     # keep=0 本次不清理：避免把正在恢复的旧快照顺手删掉。
     safety = create_snapshot(db_path, keep=0)
-    source = sqlite3.connect(snapshot_path)
-    dest = sqlite3.connect(db_path)
-    try:
-        source.backup(dest)
-    finally:
-        dest.close()
-        source.close()
+    _copy_database(snapshot_path, db_path)
     return safety
 
 

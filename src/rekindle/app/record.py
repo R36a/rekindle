@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from rekindle.app.ports import RecordPort
+from rekindle.app.ports import Repo
 from rekindle.domain import extract_rule
 from rekindle.domain.dates import at_midnight, latest_contact, resolve_day
 from rekindle.domain.errors import (
@@ -23,7 +23,8 @@ from rekindle.domain.errors import (
     EmptyCapture,
     PersonNotFound,
 )
-from rekindle.domain.fields import FIELD_LABELS, normalize_fields
+from rekindle.domain.fields import FIELD_LABELS, merge_fields, normalize_fields
+from rekindle.domain.limits import SUMMARY_MAX_LENGTH
 from rekindle.domain.models import (
     CaptureStatus,
     ExtractedFields,
@@ -49,7 +50,7 @@ class ConfirmResult:
     interaction_id: int
 
 
-def record(repo: RecordPort, text: str, now: datetime) -> RecordedCapture:
+def record(repo: Repo, text: str, now: datetime) -> RecordedCapture:
     '''规则抽取并保存草稿。
 
     原话先裁剪：模型读回来时本来就会被 strip（_StrictModel 的 str_strip_whitespace），
@@ -71,7 +72,7 @@ def record(repo: RecordPort, text: str, now: datetime) -> RecordedCapture:
 
 
 def manual(
-    repo: RecordPort,
+    repo: Repo,
     *,
     now: datetime,
     name: str,
@@ -90,43 +91,27 @@ def manual(
     resolved_role = clean_optional(role)
     extra_fields = normalize_fields(fields)
     occurred_at = at_midnight(resolve_day(now.date(), occurred_on))
-    summary = _manual_summary(
-        display_name,
-        occurred_at.date(),
-        resolved_company,
-        resolved_role,
-        extra_fields,
-    )[:500]
 
-    with repo.transaction():
-        person_id, person_name, created_new = _upsert_person(
-            repo,
-            display_name=display_name,
-            company=resolved_company,
-            role=resolved_role,
-            fields=extra_fields,
-            occurred_at=occurred_at,
-        )
-        interaction_id = repo.add_interaction(
-            Interaction(
-                person_id=person_id,
-                capture_id=None,
-                occurred_at=occurred_at,
-                summary=summary,
-                created_at=now,
-            )
-        )
-
-    return ConfirmResult(
-        person_id=person_id,
-        person_name=person_name,
-        created_new=created_new,
-        interaction_id=interaction_id,
+    return _commit(
+        repo,
+        display_name=display_name,
+        company=resolved_company,
+        role=resolved_role,
+        fields=extra_fields,
+        occurred_at=occurred_at,
+        now=now,
+        summary=_manual_summary(
+            display_name,
+            occurred_at.date(),
+            resolved_company,
+            resolved_role,
+            extra_fields,
+        ),
     )
 
 
 def confirm(
-    repo: RecordPort,
+    repo: Repo,
     capture_id: int,
     *,
     now: datetime,
@@ -163,13 +148,45 @@ def confirm(
     # 原话一定非空（record 入口已拦），记录文本就是原话本身。
     summary = capture.raw_text.strip()
 
+    return _commit(
+        repo,
+        display_name=display_name,
+        company=resolved_company,
+        role=resolved_role,
+        fields=extra_fields,
+        occurred_at=occurred_at,
+        now=now,
+        summary=summary,
+        capture_id=capture_id,
+        create_new=create_new,
+    )
+
+
+def _commit(
+    repo: Repo,
+    *,
+    display_name: str,
+    company: str | None,
+    role: str | None,
+    fields: dict[str, list[str]],
+    occurred_at: datetime,
+    now: datetime,
+    summary: str,
+    capture_id: int | None = None,
+    create_new: bool = False,
+) -> ConfirmResult:
+    '''一次入库：建/并人 + 写交往记录（+ 完成草稿），全在一个事务里。
+
+    manual 与 confirm 只有「摘要怎么来、要不要完结草稿」不同，
+    写入流程共用这一份实现——以前是两个各 20 行的复制块。
+    '''
     with repo.transaction():
         person_id, person_name, created_new = _upsert_person(
             repo,
             display_name=display_name,
-            company=resolved_company,
-            role=resolved_role,
-            fields=extra_fields,
+            company=company,
+            role=role,
+            fields=fields,
             occurred_at=occurred_at,
             create_new=create_new,
         )
@@ -178,11 +195,12 @@ def confirm(
                 person_id=person_id,
                 capture_id=capture_id,
                 occurred_at=occurred_at,
-                summary=summary[:500],
+                summary=summary[:SUMMARY_MAX_LENGTH],
                 created_at=now,
             )
         )
-        repo.confirm_capture(capture_id, person_id)
+        if capture_id is not None:
+            repo.confirm_capture(capture_id, person_id)
 
     return ConfirmResult(
         person_id=person_id,
@@ -193,7 +211,7 @@ def confirm(
 
 
 def _upsert_person(
-    repo: RecordPort,
+    repo: Repo,
     *,
     display_name: str,
     company: str | None,
@@ -223,12 +241,7 @@ def _upsert_person(
     companies = dict(existing.companies)
     if company:
         companies[occurred_at.date()] = company
-    merged_fields = {key: list(values) for key, values in existing.fields.items()}
-    for key, values in fields.items():
-        merged = merged_fields.setdefault(key, [])
-        for value in values:
-            if value not in merged:
-                merged.append(value)
+    merged_fields = merge_fields(existing.fields, fields)
     repo.update_person(
         existing.model_copy(
             update={
@@ -265,5 +278,5 @@ def _manual_summary(
     return MANUAL_PREFIX + '，'.join(parts)
 
 
-def _match_person(repo: RecordPort, name: str) -> Person | None:
+def _match_person(repo: Repo, name: str) -> Person | None:
     return repo.find_person_by_alias(name) or repo.find_person_by_name(name)

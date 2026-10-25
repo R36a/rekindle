@@ -17,6 +17,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from rekindle.domain.limits import RAW_TEXT_MAX_LENGTH, SUMMARY_MAX_LENGTH
 from rekindle.domain.relations import RelationKind
 from rekindle.domain.text import NAME_MAX_LENGTH
 
@@ -126,7 +127,7 @@ class Capture(_StrictModel):
     '''一条原始输入。raw_text 就是用户原话本身，只在入口裁掉首尾空白。'''
 
     id: int | None = None
-    raw_text: str = Field(min_length=1, max_length=2000)
+    raw_text: str = Field(min_length=1, max_length=RAW_TEXT_MAX_LENGTH)
     created_at: datetime
     status: CaptureStatus = CaptureStatus.DRAFT
     source: ExtractSource = ExtractSource.RULE
@@ -143,50 +144,8 @@ class Interaction(_StrictModel):
     person_id: int
     capture_id: int | None = None
     occurred_at: datetime
-    summary: str = Field(min_length=1, max_length=500)
+    summary: str = Field(min_length=1, max_length=SUMMARY_MAX_LENGTH)
     created_at: datetime
-
-
-class Permission(StrEnum):
-    '''AI 可以请求的、需要授权的动作（对应 §11.1 的开关）。'''
-
-    ADD_FIELD = 'add_field'
-    DELETE_FIELD = 'delete_field'
-    AUTO_COMMIT = 'auto_commit'
-    SNAPSHOT = 'snapshot'
-
-
-class PermissionDenied(RuntimeError):
-    '''权限不足：对应设置未开启（默认最小权限）。'''
-
-    def __init__(self, perm: Permission) -> None:
-        super().__init__(f'权限未开启：{perm.value}（默认最小权限）')
-        self.perm = perm
-
-
-# 快照保留份数：domain 定义，infra 与 Settings 共用（单一来源）。
-DEFAULT_SNAPSHOT_KEEP = 10
-
-
-class Settings(_StrictModel):
-    '''用户设置。AI 权限默认最小（全部关闭）。'''
-
-    ai_add_field: bool = False
-    ai_delete_field: bool = False
-    ai_auto_commit: bool = False
-    ai_snapshot: bool = False
-
-    auto_snapshot: bool = True
-    auto_snapshot_frequency: str = 'on_exit'   # on_startup / daily / on_exit
-    snapshot_keep: int = Field(default=DEFAULT_SNAPSHOT_KEEP, ge=1, le=1000)
-    snapshot_dir: str = 'user_data/snapshots'
-
-    def allows(self, perm: Permission) -> bool:
-        return bool(getattr(self, 'ai_' + perm.value, False))
-
-    def require(self, perm: Permission) -> None:
-        if not self.allows(perm):
-            raise PermissionDenied(perm)
 
 
 class FieldSpec(_StrictModel):

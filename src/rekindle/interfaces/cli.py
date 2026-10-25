@@ -12,6 +12,7 @@ import argparse
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from typing import cast
 
 from rekindle import __version__
 from rekindle.app import backup, queries, record
@@ -19,7 +20,7 @@ from rekindle.app import edit as edit_uc
 from rekindle.app.queries import PersonDetail
 from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError
-from rekindle.domain.fields import FIELD_LABELS
+from rekindle.domain.fields import DEFAULT_FIELDS, FIELD_LABELS
 from rekindle.domain.models import ExtractedFields, Person
 from rekindle.infra.snapshot import (
     create_snapshot,
@@ -38,6 +39,16 @@ def _parse_date(value: str) -> date:
             '日期格式应为 YYYY-MM-DD，或 今天/昨天/前天/上周'
         )
     return parsed
+
+
+def _add_contact_arguments(parser: argparse.ArgumentParser) -> None:
+    '''生成 --wechat / --qq / --email / --phone：字段只由 DEFAULT_FIELDS 定义一次。'''
+    for spec in DEFAULT_FIELDS:
+        parser.add_argument(
+            f'--{spec.key}',
+            action='append',
+            help=f'{spec.label}（可重复，追加不覆盖）',
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,10 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--name', help='姓名（抽不到时必填）')
     p.add_argument('--company')
     p.add_argument('--role')
-    p.add_argument('--wechat', action='append', help='微信号（可重复，追加不覆盖）')
-    p.add_argument('--qq', action='append', help='QQ 号（可重复，追加不覆盖）')
-    p.add_argument('--email', action='append', help='邮箱（可重复，追加不覆盖）')
-    p.add_argument('--phone', action='append', help='电话（可重复，追加不覆盖）')
+    _add_contact_arguments(p)
     p.add_argument(
         '--when',
         type=_parse_date,
@@ -79,10 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--name', required=True, help='姓名（必填）')
     p.add_argument('--company')
     p.add_argument('--role')
-    p.add_argument('--wechat', action='append', help='微信号（可重复，追加不覆盖）')
-    p.add_argument('--qq', action='append', help='QQ 号（可重复，追加不覆盖）')
-    p.add_argument('--email', action='append', help='邮箱（可重复，追加不覆盖）')
-    p.add_argument('--phone', action='append', help='电话（可重复，追加不覆盖）')
+    _add_contact_arguments(p)
     p.add_argument(
         '--when',
         type=_parse_date,
@@ -243,13 +248,13 @@ def _run(args: argparse.Namespace, repo: SqliteRepo, now: datetime) -> int:
 
 
 def _contact_fields(args: argparse.Namespace) -> dict[str, list[str]]:
-    raw = {
-        'wechat': args.wechat or [],
-        'qq': args.qq or [],
-        'email': args.email or [],
-        'phone': args.phone or [],
-    }
-    return {key: values for key, values in raw.items() if values}
+    '''联系方式：key 一律来自 DEFAULT_FIELDS，不再手写四份。'''
+    fields: dict[str, list[str]] = {}
+    for spec in DEFAULT_FIELDS:
+        values = cast('list[str] | None', getattr(args, spec.key, None))
+        if values:
+            fields[spec.key] = list(values)
+    return fields
 
 
 def _print_fields(parsed: ExtractedFields) -> None:

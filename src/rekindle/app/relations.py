@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from rekindle.app.ports import RelationPort
+from rekindle.app.ports import Repo
 from rekindle.domain.errors import InvalidRelation, PersonNotFound
 from rekindle.domain.models import Relation
 from rekindle.domain.relations import SELECTABLE_KINDS, RelationKind
@@ -16,7 +16,7 @@ from rekindle.domain.text import clean_optional
 
 
 def add_relation(
-    repo: RelationPort,
+    repo: Repo,
     *,
     person_id: int,
     other_id: int,
@@ -41,7 +41,7 @@ def add_relation(
 
 
 def add_introduction(
-    repo: RelationPort,
+    repo: Repo,
     *,
     introducer_id: int,
     introduced_id: int,
@@ -61,11 +61,11 @@ def add_introduction(
     )
 
 
-def remove_relation(repo: RelationPort, relation_id: int) -> None:
+def remove_relation(repo: Repo, relation_id: int) -> None:
     repo.delete_relation(relation_id)
 
 
-def _validate_pair(repo: RelationPort, first: int, second: int) -> None:
+def _validate_pair(repo: Repo, first: int, second: int) -> None:
     if first == second:
         raise InvalidRelation('不能和自己建立关系')
     if repo.get_person(first) is None:

@@ -16,6 +16,7 @@ from rekindle.infra.snapshot import (
     restore_snapshot,
 )
 from rekindle.interfaces.format import human_size
+from rekindle.interfaces.ui import make_table
 
 
 class SnapshotDialog(tk.Toplevel):
@@ -36,18 +37,13 @@ class SnapshotDialog(tk.Toplevel):
         self._infos: list[SnapshotInfo] = []
         self._status = tk.StringVar()
 
-        self._tree = ttk.Treeview(
-            self, columns=('时间', '大小', '版本', '文件'), show='headings', height=10
+        self._tree = make_table(
+            self,
+            {'时间': 160, '大小': 90, '版本': 60, '文件': 400},
+            height=10,
+            padx=8,
+            pady=8,
         )
-        for column, width in (
-            ('时间', 160),
-            ('大小', 90),
-            ('版本', 60),
-            ('文件', 400),
-        ):
-            self._tree.heading(column, text=column)
-            self._tree.column(column, width=width, anchor='w')
-        self._tree.pack(fill='both', expand=True, padx=8, pady=8)
 
         bottom = ttk.Frame(self)
         bottom.pack(fill='x', padx=8, pady=(0, 8))

@@ -10,9 +10,9 @@ from tkinter import messagebox, ttk
 
 from rekindle.app import edit as edit_uc
 from rekindle.app import relations as relation_uc
-from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError, RelationExists
-from rekindle.domain.fields import DEFAULT_FIELDS
+from rekindle.domain.fields import DEFAULT_FIELDS, merge_fields
+from rekindle.domain.limits import MAX_LIST_LIMIT
 from rekindle.domain.models import Interaction, Relation
 from rekindle.domain.relations import RelationKind, label_of, rank_of
 from rekindle.domain.text import clean_optional
@@ -20,6 +20,7 @@ from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.relation_dialog import RelationDialog
 from rekindle.interfaces.snapshot_guard import SnapshotGuard
+from rekindle.interfaces.ui import fill_person_choices, make_table, read_date
 
 
 class PersonEditor(tk.Toplevel):
@@ -101,14 +102,9 @@ class PersonEditor(tk.Toplevel):
     def _build_companies(self, book: ttk.Notebook) -> None:
         tab = ttk.Frame(book, padding=6)
         book.add(tab, text='公司历史')
-        self._company_tree = ttk.Treeview(
-            tab, columns=('日期', '公司'), show='headings', height=6
+        self._company_tree = make_table(
+            tab, {'日期': 130, '公司': 420}, height=6
         )
-        self._company_tree.heading('日期', text='日期')
-        self._company_tree.heading('公司', text='公司')
-        self._company_tree.column('日期', width=130, anchor='w')
-        self._company_tree.column('公司', width=420, anchor='w')
-        self._company_tree.pack(fill='both', expand=True)
         self._company_tree.bind('<<TreeviewSelect>>', self._pick_company)
 
         form = ttk.Frame(tab)
@@ -174,20 +170,9 @@ class PersonEditor(tk.Toplevel):
             side='left'
         )
 
-        frames = ttk.Frame(tab)
-        frames.pack(fill='both', expand=True)
-        self._relation_tree = ttk.Treeview(
-            frames, columns=('姓名', '关系', '备注'), show='headings', height=8
+        self._relation_tree = make_table(
+            tab, {'姓名': 130, '关系': 90, '备注': 430}, height=8
         )
-        for column, width in (('姓名', 130), ('关系', 90), ('备注', 430)):
-            self._relation_tree.heading(column, text=column)
-            self._relation_tree.column(column, width=width, anchor='w')
-        scrollbar = ttk.Scrollbar(
-            frames, orient='vertical', command=self._relation_tree.yview
-        )
-        self._relation_tree.configure(yscrollcommand=scrollbar.set)
-        self._relation_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
 
         buttons = ttk.Frame(tab)
         buttons.pack(fill='x', pady=(6, 0))
@@ -201,13 +186,9 @@ class PersonEditor(tk.Toplevel):
     def _build_interactions(self, book: ttk.Notebook) -> None:
         tab = ttk.Frame(book, padding=6)
         book.add(tab, text='交往记录')
-        self._interaction_tree = ttk.Treeview(
-            tab, columns=('id', '日期', '内容'), show='headings', height=7
+        self._interaction_tree = make_table(
+            tab, {'id': 50, '日期': 120, '内容': 560}, height=7
         )
-        for column, width in (('id', 50), ('日期', 120), ('内容', 560)):
-            self._interaction_tree.heading(column, text=column)
-            self._interaction_tree.column(column, width=width, anchor='w')
-        self._interaction_tree.pack(fill='both', expand=True)
         self._interaction_tree.bind('<<TreeviewSelect>>', self._pick_interaction)
 
         form = ttk.Frame(tab)
@@ -313,20 +294,12 @@ class PersonEditor(tk.Toplevel):
         self._refresh_introducer_choices()
 
     def _refresh_introducer_choices(self) -> None:
-        people = [
-            person
-            for person in self._repo.list_people('', 500)
-            if person.id != self._person_id
-        ]
-        self._introducer_ids = {
-            f'{person.display_name} (#{person.id})': person.id
-            for person in people
-            if person.id is not None
-        }
-        values: tuple[str, ...] = ('', *self._introducer_ids)
-        self._introducer_combo.configure(values=values)
-        if self._introducer_var.get() not in values:
-            self._introducer_var.set('')
+        self._introducer_ids = fill_person_choices(
+            self._introducer_combo,
+            self._introducer_var,
+            self._repo.list_people('', MAX_LIST_LIMIT),
+            exclude_id=self._person_id,
+        )
 
     def _save_introducer(self) -> None:
         introducer_id = self._introducer_ids.get(self._introducer_var.get())
@@ -385,11 +358,8 @@ class PersonEditor(tk.Toplevel):
     # ---------- 公司历史 ----------
 
     def _add_company(self) -> None:
-        day = parse_date_input(self._company_date.get(), date.today())
+        day = read_date(self, self._company_date.get())
         if day is None:
-            messagebox.showerror(
-                '日期格式不对', '用 YYYY-MM-DD 或 今天/昨天', parent=self
-            )
             return
         company = self._company_name.get().strip()
         if not company:
@@ -418,10 +388,9 @@ class PersonEditor(tk.Toplevel):
     # ---------- 联系方式 ----------
 
     def _add_field(self, key: str) -> None:
-        values = self._fields.setdefault(key, [])
-        for value in split_values(self._new_values[key].get()):
-            if value not in values:
-                values.append(value)
+        self._fields = merge_fields(
+            self._fields, {key: split_values(self._new_values[key].get())}
+        )
         self._new_values[key].set('')
         self._refresh_fields()
 
@@ -456,11 +425,8 @@ class PersonEditor(tk.Toplevel):
         if item is None:
             messagebox.showinfo('先选一条', '请先在列表里选中一条记录', parent=self)
             return
-        day = parse_date_input(self._edit_date.get(), date.today())
+        day = read_date(self, self._edit_date.get())
         if day is None:
-            messagebox.showerror(
-                '日期格式不对', '用 YYYY-MM-DD 或 今天/昨天', parent=self
-            )
             return
         if not self._snapshot_once():
             return

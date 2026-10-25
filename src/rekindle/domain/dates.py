@@ -9,6 +9,8 @@ from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta
 
 # 关键词 → 相对今天的天数。
+# 遍历顺序就是 dict 的插入顺序：这些词两两不互为子串，所以顺序不影响结果，
+# 不需要再单独维护一张「判断顺序」表。
 RELATIVE_DAYS: dict[str, int] = {
     '前天': -2,
     '昨天': -1,
@@ -20,11 +22,6 @@ RELATIVE_DAYS: dict[str, int] = {
     '上个月': -30,
     '下个月': 30,
 }
-
-# 抽取时的判断顺序：更具体的词先判断。
-RELATIVE_ORDER = (
-    '前天', '昨天', '明天', '后天', '今天', '上周', '下周', '上个月', '下个月',
-)
 
 
 def parse_date_input(text: str, today: date) -> date | None:

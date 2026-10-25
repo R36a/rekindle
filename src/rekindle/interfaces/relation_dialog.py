@@ -24,8 +24,7 @@ from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.snapshot_guard import SnapshotGuard
-
-_COLUMNS = ('姓名', '公司', '职位')
+from rekindle.interfaces.ui import make_table
 
 
 class RelationDialog(tk.Toplevel):
@@ -82,20 +81,13 @@ class RelationDialog(tk.Toplevel):
             side='left'
         )
 
-        frames = ttk.Frame(choose)
-        frames.pack(fill='both', expand=True, padx=6, pady=(0, 6))
-        self._candidates = ttk.Treeview(
-            frames, columns=_COLUMNS, show='headings', height=7
+        self._candidates = make_table(
+            choose,
+            {'姓名': 160, '公司': 240, '职位': 160},
+            height=7,
+            padx=6,
+            pady=(0, 6),
         )
-        for column, width in (('姓名', 160), ('公司', 240), ('职位', 160)):
-            self._candidates.heading(column, text=column)
-            self._candidates.column(column, width=width, anchor='w')
-        scrollbar = ttk.Scrollbar(
-            frames, orient='vertical', command=self._candidates.yview
-        )
-        self._candidates.configure(yscrollcommand=scrollbar.set)
-        self._candidates.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
         self._candidates.bind('<<TreeviewSelect>>', self._pick_candidate)
 
         create = ttk.LabelFrame(self, text='② 不在库里：先新建联系人')

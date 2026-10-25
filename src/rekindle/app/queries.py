@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rekindle.app.ports import QueryPort
+from rekindle.app.ports import Repo
 from rekindle.domain.errors import PersonNotFound
+from rekindle.domain.limits import DEFAULT_LIST_LIMIT
 from rekindle.domain.models import Interaction, Person
 
 
@@ -18,11 +19,13 @@ class PersonDetail:
     interactions: list[Interaction]
 
 
-def list_people(repo: QueryPort, query: str = '', limit: int = 50) -> list[Person]:
+def list_people(
+    repo: Repo, query: str = '', limit: int = DEFAULT_LIST_LIMIT
+) -> list[Person]:
     return repo.list_people(query, limit)
 
 
-def person_detail(repo: QueryPort, person_id: int) -> PersonDetail:
+def person_detail(repo: Repo, person_id: int) -> PersonDetail:
     person = repo.get_person(person_id)
     if person is None:
         raise PersonNotFound(person_id)

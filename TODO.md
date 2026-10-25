@@ -41,14 +41,20 @@
 - [x] **P1 联系方式规范化统一**：`record` 与 `edit` 共用 `domain/fields.normalize_fields`（去空白/去空值/去重）
 - [x] **P1 日期规则统一**：新增 `domain/dates.at_midnight` / `resolve_day`，record.manual / record.confirm / edit.save_interaction 共用
 - [x] **P1 写前快照策略统一**：新增 `interfaces/snapshot_guard.SnapshotGuard`，编辑窗口与关系对话框都改成「一次会话一次」
-- [x] **P1 修 `snapshot_keep` 冲突**：统一到 `domain/models.DEFAULT_SNAPSHOT_KEEP = 10`，infra 与 Settings 共用
-- [ ] **P2 `Settings.snapshot_dir` 与实现不一致**：Settings 写 `user_data/snapshots`，实际是「数据库同目录 / snapshots」，且未接入
-- [ ] **P1 常量集中**：`limit=50`（4 处）、`summary[:500]`（4 处）、`raw_text 2000`
-- [ ] **P1 `record.manual` / `record.confirm` 的提交块 20 行重复**：抽 `_commit`；顺带把「追加去重」合并到 `fields.normalize_values`
-- [ ] **P2 API DTO 复制 domain 模型**：`PersonOut` / `ConfirmOut` + 3 个 `_x_out` 逐字段搬运（64 行），用 `from_attributes` + `field_serializer`
-- [ ] **P2 人员展示格式统一**：`person_label`（gui / relation_dialog / editor 三种拼法）
-- [ ] **P2 UI 错误弹窗抽 helper**：4 个文件 20 处 `try/except + messagebox.showerror`
-- [ ] **P2 接口层三份重复**：介绍人下拉框（gui / editor）、Treeview+滚动条（6 处）、「日期解析+报错」（3 处）
+- [x] **P1 修 `snapshot_keep` 冲突**：统一到 `DEFAULT_SNAPSHOT_KEEP = 10`（P1 已随「删 Settings」移到唯一消费者 `infra/snapshot.py`）
+- [x] **P1 常量集中**：新增 `domain/limits.py`（`DEFAULT_LIST_LIMIT` / `MAX_LIST_LIMIT` / `RAW_TEXT_MAX_LENGTH` / `SUMMARY_MAX_LENGTH`），模型、仓储、API、界面共用
+- [x] **P1 `record._commit`**：manual / confirm 的「建人 + 写记录 + 完结草稿」合成一份实现；「追加去重」抽成 `domain/fields.merge_fields`（编辑窗「添加」也用它）
+- [x] **P1 端口收敛**：5 个 Protocol → 1 个 `Repo`（唯一实现是 SqliteRepo，测试用真实临时库；以前 `get_person` 签名抄了 4 份）
+- [x] **P1 删未接线的权限模型**：`Settings` / `Permission` / `PermissionDenied` 与 6 个测试（无任何业务调用方，README 也写着「没有开关」）
+- [x] **P1 接口层三份重复**：新增 `interfaces/ui.py`——`make_table`（6 处 Treeview 收敛，顺带补齐 2 张表原本缺失的滚动条）、`read_date`（3 处日期解析，提示词由 `RELATIVE_DAYS` 派生）、`fill_person_choices`（2 处介绍人下拉，「姓名 (#id)」格式只此一处）
+- [x] **P1 CLI 字段参数生成**：`--wechat/--qq/--email/--phone` 由 `DEFAULT_FIELDS` 生成，`_contact_fields` 不再写死 4 个 key
+- [x] **P1 仓储单人/批量查询统一**：删 `_companies_of` / `_fields_of`，`_load_person` 复用批量版
+- [x] **P1 `snapshot._copy_database`**：两处「开两个连接 + backup + close」合并
+- [x] **P1 删 `RELATIVE_ORDER`**：`RELATIVE_DAYS` 的 dict 顺序即遍历顺序（这些词两两不互为子串）
+- [x] **P2 人员展示格式统一**：并入 `ui.fill_person_choices`
+- [x] **P2 UI 错误弹窗**：评估后**不抽**包装——`messagebox.showerror` 本身就是唯一实现，各站点标题与后续动作不同；抽一层只是别名，不消除逻辑
+- [ ] **P2 API DTO 复制 domain 模型**：`PersonOut` / `ConfirmOut` + 3 个 `_x_out` 逐字段搬运，用 `from_attributes` + `field_serializer`
+- [ ] **P2 关系类型 9 个派生结构**：`domain/relations.py` 里 5 个投影 + 2 个函数只表达 6 行数据
 
 ## 已完成
 

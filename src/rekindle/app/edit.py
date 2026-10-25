@@ -9,10 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from rekindle.app.ports import EditPort
+from rekindle.app.ports import Repo
 from rekindle.domain.dates import at_midnight, latest_contact
 from rekindle.domain.errors import PersonNotFound
 from rekindle.domain.fields import normalize_fields
+from rekindle.domain.limits import SUMMARY_MAX_LENGTH
 from rekindle.domain.models import Interaction, Person
 from rekindle.domain.text import clean_optional, require_name
 
@@ -26,7 +27,7 @@ class PersonEdit:
     fields: dict[str, list[str]]
 
 
-def save_person(repo: EditPort, person_id: int, edit: PersonEdit) -> Person:
+def save_person(repo: Repo, person_id: int, edit: PersonEdit) -> Person:
     person = repo.get_person(person_id)
     if person is None:
         raise PersonNotFound(person_id)
@@ -54,7 +55,7 @@ def save_person(repo: EditPort, person_id: int, edit: PersonEdit) -> Person:
 
 
 def save_interaction(
-    repo: EditPort,
+    repo: Repo,
     interaction: Interaction,
     *,
     occurred_on: date,
@@ -69,7 +70,7 @@ def save_interaction(
     updated = interaction.model_copy(
         update={
             'occurred_at': at_midnight(occurred_on),
-            'summary': text[:500],
+            'summary': text[:SUMMARY_MAX_LENGTH],
         }
     )
     repo.update_interaction(updated)
@@ -77,18 +78,18 @@ def save_interaction(
     return updated
 
 
-def delete_interaction(repo: EditPort, interaction: Interaction) -> None:
+def delete_interaction(repo: Repo, interaction: Interaction) -> None:
     if interaction.id is None:
         raise ValueError('需要 interaction.id')
     repo.delete_interaction(interaction.id)
     _sync_last_contact(repo, interaction.person_id)
 
 
-def archive_person(repo: EditPort, person_id: int) -> None:
+def archive_person(repo: Repo, person_id: int) -> None:
     repo.archive_person(person_id)
 
 
-def _sync_last_contact(repo: EditPort, person_id: int) -> None:
+def _sync_last_contact(repo: Repo, person_id: int) -> None:
     '''交往记录增删改后，把「最近联系」重算成最大日期。'''
     person = repo.get_person(person_id)
     if person is None:

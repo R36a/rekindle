@@ -17,17 +17,18 @@ from tkinter import messagebox, ttk
 
 from rekindle.app import queries, record
 from rekindle.app import relations as relation_uc
-from rekindle.domain.dates import parse_date_input
 from rekindle.domain.errors import RekindleError, RelationExists
 from rekindle.domain.fields import DEFAULT_FIELDS
+from rekindle.domain.limits import MAX_LIST_LIMIT
 from rekindle.domain.text import clean_optional
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
 from rekindle.interfaces.editor import PersonEditor
 from rekindle.interfaces.inputs import split_values
 from rekindle.interfaces.snapshot_dialog import SnapshotDialog
+from rekindle.interfaces.ui import fill_person_choices, make_table, read_date
 
-_COLUMNS_PEOPLE = ('ID', '姓名', '公司', '职位', '最近联系')
+_PEOPLE_COLUMNS = {'ID': 40, '姓名': 140, '公司': 140, '职位': 100, '最近联系': 110}
 
 
 class RekindleApp(tk.Tk):
@@ -157,19 +158,9 @@ class RekindleApp(tk.Tk):
         self._search.bind('<Escape>', self._on_escape_search)
         ttk.Button(search_row, text='清空', command=self._clear_search).pack(side='left')
 
-        frames = ttk.Frame(browser)
-        frames.pack(fill='both', expand=True, padx=6, pady=(2, 6))
-        self._people_tree = ttk.Treeview(
-            frames, columns=_COLUMNS_PEOPLE, show='headings', height=10
+        self._people_tree = make_table(
+            browser, _PEOPLE_COLUMNS, height=10, padx=6, pady=(2, 6)
         )
-        widths = (40, 140, 140, 100, 110)
-        for column, width in zip(_COLUMNS_PEOPLE, widths, strict=True):
-            self._people_tree.heading(column, text=column)
-            self._people_tree.column(column, width=width, anchor='w')
-        scrollbar = ttk.Scrollbar(frames, orient='vertical', command=self._people_tree.yview)
-        self._people_tree.configure(yscrollcommand=scrollbar.set)
-        self._people_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
         self._people_tree.bind('<Double-1>', self.on_person_detail)
 
         bottom = ttk.Frame(self)
@@ -227,15 +218,8 @@ class RekindleApp(tk.Tk):
             return
 
         when_text = self._when.get().strip()
-        occurred_on = (
-            parse_date_input(when_text, datetime.now().date()) if when_text else None
-        )
+        occurred_on = read_date(self, when_text) if when_text else None
         if when_text and occurred_on is None:
-            messagebox.showerror(
-                '日期格式不对',
-                '日期用 YYYY-MM-DD，或 今天/昨天/前天/上周',
-                parent=self,
-            )
             return
 
         fields = {
@@ -332,20 +316,15 @@ class RekindleApp(tk.Tk):
         self._refresh_introducers()
 
     def _refresh_introducers(self) -> None:
-        people = self._repo.list_people('', 500)
-        self._introducer_ids = {
-            f'{person.display_name} (#{person.id})': person.id
-            for person in people
-            if person.id is not None
-        }
-        values: tuple[str, ...] = ('', *self._introducer_ids)
-        self._introducer_combo.configure(values=values)
-        if self._introduced_by.get() not in values:
-            self._introduced_by.set('')
+        self._introducer_ids = fill_person_choices(
+            self._introducer_combo,
+            self._introduced_by,
+            self._repo.list_people('', MAX_LIST_LIMIT),
+        )
 
     def _refresh_people(self) -> None:
         query = self._query.get().strip()
-        people = queries.list_people(self._repo, query, 500)
+        people = queries.list_people(self._repo, query, MAX_LIST_LIMIT)
         self._people_tree.delete(*self._people_tree.get_children())
         for person in people:
             last = ''

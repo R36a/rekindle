@@ -21,6 +21,7 @@ from rekindle.domain.errors import (
     RelationNotFound,
 )
 from rekindle.domain.fields import FIELD_KEYS
+from rekindle.domain.limits import DEFAULT_LIST_LIMIT
 from rekindle.domain.models import (
     Capture,
     CaptureStatus,
@@ -388,17 +389,6 @@ class SqliteRepo:
                 (person_id, on_date.isoformat(), company),
             )
 
-    def _companies_of(self, person_id: int) -> dict[date, str]:
-        rows = self._conn.execute(
-            'SELECT on_date, company FROM person_company WHERE person_id = ? '
-            'ORDER BY on_date',
-            (person_id,),
-        ).fetchall()
-        return {
-            date.fromisoformat(str(row['on_date'])): str(row['company'])
-            for row in rows
-        }
-
     def _companies_for(self, person_ids: list[int]) -> dict[int, dict[date, str]]:
         if not person_ids:
             return {}
@@ -416,21 +406,13 @@ class SqliteRepo:
         return result
 
     def _load_person(self, row: sqlite3.Row) -> Person:
+        '''单人读取复用批量查询：同一段 SQL 与解析只保留一处。'''
         person_id = int(row['id'])
         return _person(
-            row, self._companies_of(person_id), self._fields_of(person_id)
+            row,
+            self._companies_for([person_id]).get(person_id, {}),
+            self._fields_for([person_id]).get(person_id, {}),
         )
-
-    def _fields_of(self, person_id: int) -> dict[str, list[str]]:
-        rows = self._conn.execute(
-            'SELECT field_key, value FROM person_field '
-            'WHERE person_id = ? ORDER BY rowid',
-            (person_id,),
-        ).fetchall()
-        result: dict[str, list[str]] = {}
-        for row in rows:
-            result.setdefault(str(row['field_key']), []).append(str(row['value']))
-        return result
 
     def _fields_for(self, person_ids: list[int]) -> dict[int, dict[str, list[str]]]:
         if not person_ids:
@@ -625,7 +607,9 @@ class SqliteRepo:
 
     # ---------- 查询 ----------
 
-    def list_people(self, query: str = '', limit: int = 50) -> list[Person]:
+    def list_people(
+        self, query: str = '', limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[Person]:
         '''最近联系优先；搜索覆盖姓名、公司历史、职位、备注和别名。'''
         base = 'SELECT DISTINCT p.* FROM person p WHERE p.archived = 0 '
         order = (
