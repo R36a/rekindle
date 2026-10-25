@@ -196,30 +196,22 @@ def test_快照列表与恢复(repo: SqliteRepo) -> None:
     assert [p.display_name for p in repo.list_people()] == ['张三']
 
 
-def test_旧版本快照会先升级再恢复(repo: SqliteRepo) -> None:
-    # schema 升级后，旧快照不该变成"用不了"：恢复时在副本上升级，原文件不动。
+def test_旧版本快照被拒绝(repo: SqliteRepo) -> None:
+    # 没有逐版本迁移：旧快照恢复后只会被重建清空，所以直接拒绝，原文件也不动。
     person_id = _seed(repo)
     created = create_snapshot(repo.path)
 
     conn = sqlite3.connect(created)
     try:
-        conn.executescript(
-            '''
-            ALTER TABLE person ADD COLUMN pinyin TEXT NOT NULL DEFAULT '';
-            ALTER TABLE person ADD COLUMN initials TEXT NOT NULL DEFAULT '';
-            PRAGMA user_version = 7;
-            '''
-        )
+        conn.execute('PRAGMA user_version = 7')
         conn.commit()
     finally:
         conn.close()
 
-    safety = restore_snapshot(repo.path, created)
-    assert safety.exists()
-    person = repo.get_person(person_id)
-    assert person is not None
-    assert person.display_name == '张三'
+    with pytest.raises(SnapshotVersionMismatch):
+        restore_snapshot(repo.path, created)
 
+    assert repo.get_person(person_id) is not None
     conn = sqlite3.connect(created)
     try:
         assert conn.execute('PRAGMA user_version').fetchone()[0] == 7

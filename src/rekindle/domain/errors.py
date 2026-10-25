@@ -67,7 +67,7 @@ class SnapshotError(RekindleError):
 
 
 class SnapshotVersionMismatch(SnapshotError):
-    '''快照版本无法处理：比当前程序新，或太旧、没有逐步迁移路径。'''
+    '''快照版本与当前程序不一致（没有逐版本迁移，只支持同版本）。'''
 
     def __init__(self, found: int, expected: int, reason: str = '') -> None:
         detail = f'（{reason}）' if reason else ''

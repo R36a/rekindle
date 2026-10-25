@@ -2,9 +2,9 @@
 
 **分工**：
 - 当前形状（列名/类型/NOT NULL/默认值）← `domain/person_schema.COLUMN_FIELDS`
-- 历史迁移步骤（v6→v7 等）← `infra/sqlite_repo`，保持显式（历史不能重算）
+- 版本不一致直接重建（`sqlite_repo._migrate`），没有历史步骤要维护
 
-这样「加一个 person 列」= 注册表加一项 + 写一条迁移，不会再出现
+这样「加一个 person 列」= 注册表加一项，不会再出现
 "模型有、DDL 没有"或反过来的漂移。
 '''
 

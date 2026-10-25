@@ -10,9 +10,10 @@
 
 ## 迁移策略（开发期）
 
-> 决策（2026-10-24）：**开放开发期暂不做增量迁移**。
-> 当前使用人数为 0，schema 变更时直接重建库是可接受的；发布前再实现按版本逐步迁移。
-> 发布门槛：第一个公开版本前必须完成迁移框架 + 旧快照恢复测试；一旦有外部测试者/用户，立即按“有用户”处理。
+> 决策（2026-10-25）：**不做版本迁移**——`user_version` 与 `SCHEMA_VERSION` 不一致就整体重建
+> （`sqlite_repo._migrate` → `_rebuild`），旧快照恢复也直接拒绝；原 `_v6_to_v7` / `_v7_to_v8`、
+> `_MIGRATION_STEPS`、`can_upgrade_from` 已删除。
+> 当前使用人数为 0，schema 变更时直接重建库是可接受的；一旦有外部测试者/用户，先补迁移再发布。
 
 ## 待办
 
@@ -28,22 +29,21 @@
 - [x] 关系图：person_relation + 详情页「认识的人」/「通过谁认识」+ 主界面「通过谁认识」+ 关系对话框内联新建（v6；只记 introduced，不自动建认识边）
 - [ ] 关系图：二度查询与引荐路径（v6 已就绪，待做）
 - [ ] 关系标签（朋友/同事/客户/同学）与待补全视图（v6 已就绪，待做）
-- [ ] 增量迁移（**发布前**；开发期允许重置库，见「迁移策略」）
 - [ ] 明天做**（示例占位，待明确）
 
 ## 幽灵代码清理（2026-10-25，schema v8）
 
 - [x] **删 `models.Alias`**：全仓无构造（`add_alias` 直接写 SQL），死模型；`alias` 表与搜索不受影响
 - [x] **删 `person.pinyin` / `person.initials`**：从建库起从未写入，拼音搜索未实现；`Person` 模型、DDL、读写 SQL 一并去掉（v7→v8 用 `ALTER TABLE … DROP COLUMN`）
-- [x] **迁移改成逐版本步骤**：`_MIGRATION_STEPS = {6: v6→v7, 7: v7→v8}`，`_upgrade()` 顺序执行；更老的开发库仍走重建（TODO「迁移策略」）
+- [x] ~~**迁移改成逐版本步骤**~~ → **已撤销（2026-10-25）**：逐版本迁移没有意义，版本不符直接重建；`_MIGRATION_STEPS` / `_upgrade` / `can_upgrade_from` 已删除
 - [x] **旧备份兼容**：`_RETIRED_COLUMNS` 让导入忽略已删除的列（v3 备份里带 pinyin/initials 也能导），不再把整份备份判成「未知列」
-- [x] **旧快照可用**：`restore_snapshot` 对旧版本快照先在临时副本上升级再恢复（原文件不动），只有「比程序新」或「太旧无迁移路径」才拒绝
+- [x] ~~**旧快照可用**~~ → **已撤销（2026-10-25）**：没有迁移可跑，旧版本快照直接拒绝（`SnapshotVersionMismatch`），原文件不动
 - [ ] **保留 `extract_llm` + `llm_http`**（用户决定不删）：仍无入口，建议后续加一条 `httpx.MockTransport` 契约测试防腐烂
 
 ## 字段注册表（2026-10-25 彻底重构）
 
 - [x] **`domain/person_schema.py` = 唯一字段定义**：`PersonField`（key/标签/存储方式/约束/可搜/摘要顺序/CLI/表单宽度），`PERSON_FIELDS` 一项声明
-- [x] **schema 由注册表生成**：新增 `infra/schema_sql.py`，`person` 表 DDL 不再手写（迁移脚本仍是显式历史）；有测试比对 `PRAGMA table_info` 与注册表逐列一致
+- [x] **schema 由注册表生成**：新增 `infra/schema_sql.py`，`person` 表 DDL 不再手写（版本不符直接重建，没有迁移脚本要维护）；有测试比对 `PRAGMA table_info` 与注册表逐列一致
 - [x] **搜索 SQL 由注册表生成**：`searchable=True` 的字段自动进 WHERE（列 / 公司历史 / 联系方式三种匹配方式），改字段不必记得改 SQL
 - [x] **CLI 参数由注册表生成**：`--name/--company/--role/--wechat…` 全部派生，`_person_values()` 把参数还原成 `record.*` 入参
 - [x] **摘要文本由注册表生成**：`_manual_summary` 按 `SUMMARY_FIELDS` 的顺序拼，不再手写「姓名→公司→职位→微信…」
@@ -55,7 +55,6 @@
 
 - [x] **API 出参**：`_Out` 基类 + `ConfigDict(from_attributes=True)` + `@field_serializer`（date 键 → ISO），删掉 `_person_out` / `_interaction_out` / `_confirm_out`；端点直接返回领域对象（`RecordedCapture` / `ConfirmResult` / `PersonDetail`）
 - [ ] **API 入参**：`ManualIn/ConfirmIn` 仍显式声明——对外契约（`name` 别名、必填规则与内部不同），且 `mypy --strict` 需要静态类型，`create_model` 会让类型检查失效
-- [ ] **迁移脚本**：v6→v7 这类历史步骤不能从当前注册表重算，保持显式
 
 ## 代码重复治理（2026-10-25 体检）
 
@@ -84,6 +83,7 @@
 
 ## 已完成
 
+- [x] 删掉版本迁移：`_v6_to_v7` / `_v7_to_v8` / `_MIGRATION_STEPS` / `can_upgrade_from` / `_upgrade` 全部移除，版本不符一律整体重建（`_rebuild`）；旧快照恢复改为「版本必须一致」，不一致直接拒绝
 - [x] 关系对话框「新建联系人 + 记介绍 + 记关系」改为单事务：新增可嵌套的 `Repo.atomic()`，三步失败任一步都整体回滚（以前会留下「人建了、关系没建」）；含两条测试（`atomic` 嵌套回滚、对话框失败不留半条数据）
 - [x] v0.3 收窄：移除提醒与待办（模型 / 表 / 命令 / GUI / 测试），旧库自动重建
 - [x] 快捷查找：GUI 搜索框（Ctrl+F 定位、Esc 清空）+ 最近联系优先 + 别名可搜

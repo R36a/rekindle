@@ -1,13 +1,14 @@
 '''SQLite 仓储：本项目唯一的持久化实现（ADR-001 单文件）。
 
 v0.3 只存「人 / 别名 / 原始输入 / 交往记录」：提醒与待办按产品决策移除。
-旧库（v1）打开时直接重建：开发期数据按用户要求丢弃，不做兼容迁移。
+**没有逐版本迁移**：`PRAGMA user_version` 与 `SCHEMA_VERSION` 不一致就整体重建
+（含空库与 v1 老结构），旧数据丢弃——要看历史去 git，不在代码里养迁移步骤。
 '''
 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -41,18 +42,6 @@ SCHEMA_VERSION = 8
 # 关系类型的取值与 domain/relations.py 的 RelationKind 同步（DB 只做兜底 CHECK）；
 # 以后允许自定义类型时，改成 relation_kind 表并做下一次迁移。
 
-# 属性字段表：迁移时也要按同一份 DDL 重建，所以单独命名，避免两处写成两份。
-# field_key 不加外键：字段集合的唯一来源是 domain/fields.DEFAULT_FIELDS（FIELD_KEYS）。
-_PERSON_FIELD_DDL = '''
-    CREATE TABLE person_field (
-        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
-        field_key TEXT    NOT NULL,
-        value     TEXT    NOT NULL,
-        PRIMARY KEY (person_id, field_key, value)
-    )
-    '''
-_PERSON_FIELD_INDEX = 'CREATE INDEX ix_person_field_value ON person_field(value)'
-
 _SCHEMA = (
     # person 表的列/类型/约束由 domain/person_schema.py 生成（唯一来源）。
     person_table_sql(),
@@ -65,8 +54,16 @@ _SCHEMA = (
     )
     ''',
     'CREATE INDEX ix_person_company_name ON person_company(company)',
-    _PERSON_FIELD_DDL,
-    _PERSON_FIELD_INDEX,
+    # field_key 不加外键：字段集合的唯一来源是 domain/fields.DEFAULT_FIELDS（FIELD_KEYS）。
+    '''
+    CREATE TABLE person_field (
+        person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
+        field_key TEXT    NOT NULL,
+        value     TEXT    NOT NULL,
+        PRIMARY KEY (person_id, field_key, value)
+    )
+    ''',
+    'CREATE INDEX ix_person_field_value ON person_field(value)',
     '''
     CREATE TABLE alias (
         id        INTEGER PRIMARY KEY,
@@ -122,44 +119,6 @@ _SCHEMA = (
     'CREATE INDEX ix_person_relation_b ON person_relation(person_b_id)',
 )
 
-def _v6_to_v7(conn: sqlite3.Connection) -> None:
-    '''v6 → v7：去掉只承担外键的 field 表，属性字段的值原样保留。
-
-    field 表里的 label / field_type / description / builtin 从来没有读者，
-    等于把「有哪些字段」这条事实存了两份（另一份是 DEFAULT_FIELDS），
-    所以删表；person_field 按同一份 DDL 重建（去掉外键），值不动。
-    '''
-    conn.execute('ALTER TABLE person_field RENAME TO person_field_v6')
-    conn.execute(_PERSON_FIELD_DDL)
-    conn.execute(
-        'INSERT INTO person_field (person_id, field_key, value) '
-        'SELECT person_id, field_key, value FROM person_field_v6'
-    )
-    conn.execute('DROP TABLE person_field_v6')  # 连带删掉旧索引
-    conn.execute(_PERSON_FIELD_INDEX)
-    conn.execute('DROP TABLE IF EXISTS field')
-
-
-def _v7_to_v8(conn: sqlite3.Connection) -> None:
-    '''v7 → v8：删掉 pinyin / initials 两列。
-
-    它们从建库起就没被写过（拼音搜索从未实现），属于"预留给未来"的幽灵列。
-    真要拼音搜索时再按字段注册表加回来，并由 DDL 生成器一并处理。
-    '''
-    for column in ('pinyin', 'initials'):
-        conn.execute(f'ALTER TABLE person DROP COLUMN {column}')
-
-
-# 「当前版本 → 下一版本」的迁移步骤：只增不改，每一步都必须保住数据。
-_MIGRATION_STEPS: dict[int, Callable[[sqlite3.Connection], None]] = {
-    6: _v6_to_v7,
-    7: _v7_to_v8,
-}
-
-
-def can_upgrade_from(version: int) -> bool:
-    '''这个版本有没有逐步迁移路径（False = 只能重建，数据会丢）。'''
-    return version in _MIGRATION_STEPS
 
 # 已经删掉的列：老备份里仍带着它们，导入时忽略，而不是当「未知列」拒绝整份备份。
 _RETIRED_COLUMNS: dict[str, frozenset[str]] = {
@@ -177,7 +136,7 @@ _TABLES = (
     'person_relation',
 )
 
-# 旧结构（v1）里多出来的表；删表按子 → 父。
+# 重建时先全部删掉：含 v1 老结构独有的表，顺序按「子 → 父」。
 _LEGACY_TABLES = (
     'person_relation',
     'person_field',
@@ -313,6 +272,7 @@ class SqliteRepo:
         return int(self._conn.execute('PRAGMA user_version').fetchone()[0])
 
     def _migrate(self) -> None:
+        '''版本不一致就整体重建：项目不做逐版本迁移，旧库的数据会被丢弃。'''
         version = self.schema_version
         if version == SCHEMA_VERSION:
             return
@@ -321,27 +281,15 @@ class SqliteRepo:
                 f'数据库版本 {version} 高于程序支持的 {SCHEMA_VERSION}，请升级 rekindle'
             )
         with self.transaction():
-            if version == 0:
-                self._create_schema()
-            else:
-                self._upgrade(version)
+            self._rebuild()
             self._conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
 
     def _create_schema(self) -> None:
         for statement in _SCHEMA:
             self._conn.execute(statement)
 
-    def _upgrade(self, version: int) -> None:
-        '''按版本逐步迁移；没有对应步骤的早期开发库直接重建（会丢数据）。'''
-        while version < SCHEMA_VERSION:
-            step = _MIGRATION_STEPS.get(version)
-            if step is None:
-                self._rebuild()
-                return
-            step(self._conn)
-            version += 1
-
     def _rebuild(self) -> None:
+        '''按「子 → 父」删掉所有已知表再建一遍（含 v1 老结构独有的表）。'''
         for table in _LEGACY_TABLES:
             self._conn.execute(f'DROP TABLE IF EXISTS {table}')
         self._create_schema()

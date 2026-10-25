@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -51,70 +51,8 @@ def test_同一capture不能写两条interaction(repo: SqliteRepo) -> None:
         repo.add_interaction(interaction.model_copy(update={'id': None}))
 
 
-def test_v6库升级保留属性字段并删掉注册表(tmp_path: Path) -> None:
-    path = tmp_path / 'v6.db'
-    SqliteRepo(path).close()  # 先得到当前版本的 person 等基础表
-
-    # 还原 v6 形状（field 表 + 外键 + 两列拼音），模拟已发布的 v0.1.0 数据库。
-    conn = sqlite3.connect(path)
-    try:
-        conn.executescript(
-            '''
-            ALTER TABLE person ADD COLUMN pinyin TEXT NOT NULL DEFAULT '';
-            ALTER TABLE person ADD COLUMN initials TEXT NOT NULL DEFAULT '';
-            DROP TABLE person_field;
-            CREATE TABLE field (
-                key         TEXT PRIMARY KEY,
-                label       TEXT NOT NULL,
-                field_type  TEXT NOT NULL DEFAULT 'text',
-                description TEXT NOT NULL DEFAULT '',
-                builtin     INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE person_field (
-                person_id INTEGER NOT NULL REFERENCES person(id) ON DELETE CASCADE,
-                field_key TEXT    NOT NULL REFERENCES field(key) ON DELETE CASCADE,
-                value     TEXT    NOT NULL,
-                PRIMARY KEY (person_id, field_key, value)
-            );
-            CREATE INDEX ix_person_field_value ON person_field(value);
-            INSERT INTO person (id, display_name, pinyin) VALUES (1, '张三', 'zhangsan');
-            INSERT INTO field (key, label) VALUES ('wechat', '微信');
-            INSERT INTO person_field (person_id, field_key, value)
-                VALUES (1, 'wechat', 'wx1');
-            PRAGMA user_version = 6;
-            '''
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    migrated = SqliteRepo(path)
-    try:
-        assert migrated.schema_version == SCHEMA_VERSION
-        person = migrated.get_person(1)
-        assert person is not None
-        assert person.fields == {'wechat': ['wx1']}
-    finally:
-        migrated.close()
-
-    check = sqlite3.connect(path)
-    try:
-        tables = {
-            str(row[0])
-            for row in check.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        columns = {
-            str(row[1]) for row in check.execute('PRAGMA table_info(person)')
-        }
-    finally:
-        check.close()
-    assert 'field' not in tables
-    assert 'pinyin' not in columns and 'initials' not in columns
-
-
-def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
+def test_版本不符的旧库直接重建(tmp_path: Path) -> None:
+    # 没有逐版本迁移：v7 的库（还带拼音列）打开后整体重建，旧数据丢弃。
     path = tmp_path / 'v7.db'
     SqliteRepo(path).close()
 
@@ -126,8 +64,8 @@ def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
             ALTER TABLE person ADD COLUMN initials TEXT NOT NULL DEFAULT '';
             INSERT INTO person (id, display_name, pinyin, initials)
                 VALUES (7, '李四', 'lisi', 'ls');
-            INSERT INTO person_company (person_id, on_date, company)
-                VALUES (7, '2026-10-20', '腾讯');
+            INSERT INTO person_field (person_id, field_key, value)
+                VALUES (7, 'wechat', 'wx1');
             PRAGMA user_version = 7;
             '''
         )
@@ -135,15 +73,13 @@ def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    migrated = SqliteRepo(path)
+    rebuilt = SqliteRepo(path)
     try:
-        assert migrated.schema_version == SCHEMA_VERSION
-        person = migrated.get_person(7)
-        assert person is not None
-        assert person.display_name == '李四'
-        assert person.companies == {date(2026, 10, 20): '腾讯'}
+        assert rebuilt.schema_version == SCHEMA_VERSION
+        assert rebuilt.list_people() == []
+        assert rebuilt.get_person(7) is None
     finally:
-        migrated.close()
+        rebuilt.close()
 
     check = sqlite3.connect(path)
     try:
@@ -153,7 +89,6 @@ def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
     assert columns == [
         'id', 'display_name', 'role', 'notes', 'last_contact_at', 'archived'
     ]
-
 
 def test_atomic可嵌套且外层回滚(repo: SqliteRepo) -> None:
     # 故意嵌套两层：验证内层复用外层、外层失败时整体回滚（不能合并成一个 with）。
