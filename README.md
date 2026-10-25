@@ -35,7 +35,7 @@
 
 ## 快速上手（Windows）
 
-1. 运行 **`dist\rekindle.exe`**（约 20 MB）；发布后也可从 [Releases](https://github.com/R36a/rekindle/releases) 下载
+1. 从 [Releases](https://github.com/R36a/rekindle/releases/latest) 下载 **`rekindle-v0.1.0-win64.exe`**（约 20 MB，无需安装 Python）
 2. 双击即可，无需安装 Python。首次启动约 5–20 秒（单文件解压 + 杀软扫描），之后 2 秒内；exe 未签名，SmartScreen 提示时点「更多信息 → 仍要运行」
 3. 三步：**① 输入一句话 → 识别 → ② 核对并确认 → ③ 搜索联系人**
 
