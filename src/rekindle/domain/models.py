@@ -71,8 +71,6 @@ class Person(_StrictModel):
 
     id: int | None = None
     display_name: str = Field(min_length=1, max_length=NAME_MAX_LENGTH)
-    pinyin: str = ''
-    initials: str = ''
     companies: dict[date, str] = Field(default_factory=dict)  # 日期 -> 公司
     fields: dict[str, list[str]] = Field(default_factory=dict)  # 字段 key -> 多个值
     role: str | None = None
@@ -86,15 +84,6 @@ class Person(_StrictModel):
         if not self.companies:
             return None
         return self.companies[max(self.companies)]
-
-
-class Alias(_StrictModel):
-    '''一个人的另一个叫法。'''
-
-    id: int | None = None
-    person_id: int
-    text_norm: str = Field(min_length=1, max_length=40)
-    source: str = 'user'
 
 
 class Relation(_StrictModel):

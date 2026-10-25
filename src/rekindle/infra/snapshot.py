@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from rekindle.domain.errors import SnapshotVersionMismatch
-from rekindle.infra.sqlite_repo import SCHEMA_VERSION
+from rekindle.infra.sqlite_repo import SCHEMA_VERSION, SqliteRepo, can_upgrade_from
 
 # 快照保留份数：只有一个消费者（create_snapshot），不再跨层共用。
 DEFAULT_SNAPSHOT_KEEP = 10
@@ -81,14 +82,32 @@ def snapshot_version(path: Path) -> int:
 
 
 def restore_snapshot(db_path: Path, snapshot_path: Path) -> Path:
-    '''恢复快照，返回恢复前自动保存的「后悔药」快照。'''
+    '''恢复快照，返回恢复前自动保存的「后悔药」快照。
+
+    旧版本的快照先在**临时副本**上升级再恢复（这样 schema 升级过后旧快照仍然可用，
+    原快照文件不动）；比程序更新的快照直接拒绝。
+    '''
     version = snapshot_version(snapshot_path)
-    if version != SCHEMA_VERSION:
-        raise SnapshotVersionMismatch(version, SCHEMA_VERSION)
+    if version > SCHEMA_VERSION:
+        raise SnapshotVersionMismatch(
+            version, SCHEMA_VERSION, '快照比程序新，请升级 rekindle'
+        )
+    if version < SCHEMA_VERSION and not can_upgrade_from(version):
+        raise SnapshotVersionMismatch(
+            version, SCHEMA_VERSION, '快照太旧，没有迁移路径'
+        )
 
     # keep=0 本次不清理：避免把正在恢复的旧快照顺手删掉。
     safety = create_snapshot(db_path, keep=0)
-    _copy_database(snapshot_path, db_path)
+    with tempfile.TemporaryDirectory() as workdir:
+        source = snapshot_path
+        if version < SCHEMA_VERSION:
+            upgraded = Path(workdir) / 'upgrade.db'
+            _copy_database(snapshot_path, upgraded)
+            # 用正常仓储打开副本 = 跑与真实库完全相同的迁移步骤。
+            SqliteRepo(upgraded).close()
+            source = upgraded
+        _copy_database(source, db_path)
     return safety
 
 

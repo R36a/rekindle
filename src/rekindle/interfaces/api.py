@@ -18,11 +18,12 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from rekindle import __version__
 from rekindle.app import queries, record
-from rekindle.app.record import ConfirmResult
+from rekindle.app.queries import PersonDetail
+from rekindle.app.record import ConfirmResult, RecordedCapture
 from rekindle.domain.errors import (
     AlreadyConfirmed,
     CaptureNotFound,
@@ -35,7 +36,7 @@ from rekindle.domain.limits import (
     MAX_LIST_LIMIT,
     RAW_TEXT_MAX_LENGTH,
 )
-from rekindle.domain.models import ExtractedFields, Interaction, Person
+from rekindle.domain.models import ExtractedFields, Person
 from rekindle.domain.text import NAME_MAX_LENGTH
 from rekindle.infra.sqlite_repo import SqliteRepo
 from rekindle.interfaces.config import default_db_path
@@ -68,70 +69,52 @@ class ManualIn(_Body):
     occurred_on: date | None = None
 
 
-class PersonOut(BaseModel):
-    '''对外的人：日期键转成 ISO 字符串，避免 JSON 对象键类型问题。'''
+class _Out(BaseModel):
+    '''出参：直接从领域对象读属性（from_attributes），不再逐字段搬运。
 
+    以前是「PersonOut + _person_out()」这样一对一复制字段的写法：领域模型加一个字段，
+    这里要记得同步，否则接口少一个字段且没人发现。现在是投影 + 一个序列化器。
+    '''
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PersonOut(_Out):
     id: int
     display_name: str
     role: str | None = None
-    companies: dict[str, str]
+    companies: dict[date, str]
     fields: dict[str, list[str]]
     last_contact_at: datetime | None = None
     archived: bool
 
+    @field_serializer('companies')
+    def _companies_as_iso(self, value: dict[date, str]) -> dict[str, str]:
+        '''JSON 对象的键只能是字符串：日期 → ISO。'''
+        return {day.isoformat(): company for day, company in value.items()}
 
-class InteractionOut(BaseModel):
+
+class InteractionOut(_Out):
     id: int
     occurred_at: datetime
     summary: str
 
 
-class PersonDetailOut(BaseModel):
+class PersonDetailOut(_Out):
     person: PersonOut
     interactions: list[InteractionOut]
 
 
-class ConfirmOut(BaseModel):
+class ConfirmOut(_Out):
     person_id: int
     person_name: str
     created_new: bool
     interaction_id: int
 
 
-class CaptureOut(BaseModel):
+class CaptureOut(_Out):
     capture_id: int
     parsed: ExtractedFields
-
-
-def _person_out(person: Person) -> PersonOut:
-    return PersonOut(
-        id=person.id or 0,
-        display_name=person.display_name,
-        role=person.role,
-        companies={
-            day.isoformat(): company for day, company in person.companies.items()
-        },
-        fields=person.fields,
-        last_contact_at=person.last_contact_at,
-        archived=person.archived,
-    )
-
-
-def _interaction_out(item: Interaction) -> InteractionOut:
-    return InteractionOut(
-        id=item.id or 0,
-        occurred_at=item.occurred_at,
-        summary=item.summary,
-    )
-
-
-def _confirm_out(result: ConfirmResult) -> ConfirmOut:
-    return ConfirmOut(
-        person_id=result.person_id,
-        person_name=result.person_name,
-        created_new=result.created_new,
-        interaction_id=result.interaction_id,
-    )
 
 
 def _status_for(exc: RekindleError) -> int:
@@ -185,40 +168,37 @@ def create_app(
         return {'status': 'ok', 'version': __version__}
 
     @app.post('/captures', status_code=201, response_model=CaptureOut)
-    def create_capture(body: CaptureIn, repo: RepoDep, now: NowDep) -> CaptureOut:
-        result = record.record(repo, body.text, now)
-        return CaptureOut(capture_id=result.capture_id, parsed=result.parsed)
+    def create_capture(
+        body: CaptureIn, repo: RepoDep, now: NowDep
+    ) -> RecordedCapture:
+        return record.record(repo, body.text, now)
 
     @app.post('/captures/{capture_id}/confirm', response_model=ConfirmOut)
     def confirm_capture(
         capture_id: int, body: ConfirmIn, repo: RepoDep, now: NowDep
-    ) -> ConfirmOut:
-        return _confirm_out(
-            record.confirm(
-                repo,
-                capture_id,
-                now=now,
-                display_name=body.name,
-                company=body.company,
-                role=body.role,
-                fields=body.fields,
-                occurred_on=body.occurred_on,
-                create_new=body.create_new,
-            )
+    ) -> ConfirmResult:
+        return record.confirm(
+            repo,
+            capture_id,
+            now=now,
+            display_name=body.name,
+            company=body.company,
+            role=body.role,
+            fields=body.fields,
+            occurred_on=body.occurred_on,
+            create_new=body.create_new,
         )
 
     @app.post('/people', status_code=201, response_model=ConfirmOut)
-    def create_person(body: ManualIn, repo: RepoDep, now: NowDep) -> ConfirmOut:
-        return _confirm_out(
-            record.manual(
-                repo,
-                now=now,
-                display_name=body.name,
-                company=body.company,
-                role=body.role,
-                fields=body.fields,
-                occurred_on=body.occurred_on,
-            )
+    def create_person(body: ManualIn, repo: RepoDep, now: NowDep) -> ConfirmResult:
+        return record.manual(
+            repo,
+            now=now,
+            display_name=body.name,
+            company=body.company,
+            role=body.role,
+            fields=body.fields,
+            occurred_on=body.occurred_on,
         )
 
     @app.get('/people', response_model=list[PersonOut])
@@ -226,16 +206,12 @@ def create_app(
         repo: RepoDep,
         query: str = '',
         limit: Annotated[int, Query(ge=1, le=MAX_LIST_LIMIT)] = DEFAULT_LIST_LIMIT,
-    ) -> list[PersonOut]:
-        return [_person_out(person) for person in queries.list_people(repo, query, limit)]
+    ) -> list[Person]:
+        return queries.list_people(repo, query, limit)
 
     @app.get('/people/{person_id}', response_model=PersonDetailOut)
-    def person_detail(person_id: int, repo: RepoDep) -> PersonDetailOut:
-        detail = queries.person_detail(repo, person_id)
-        return PersonDetailOut(
-            person=_person_out(detail.person),
-            interactions=[_interaction_out(item) for item in detail.interactions],
-        )
+    def person_detail(person_id: int, repo: RepoDep) -> PersonDetail:
+        return queries.person_detail(repo, person_id)
 
     return app
 

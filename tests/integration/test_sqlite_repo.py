@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -53,13 +53,15 @@ def test_同一capture不能写两条interaction(repo: SqliteRepo) -> None:
 
 def test_v6库升级保留属性字段并删掉注册表(tmp_path: Path) -> None:
     path = tmp_path / 'v6.db'
-    SqliteRepo(path).close()  # 先得到 v7 的 person 等基础表
+    SqliteRepo(path).close()  # 先得到当前版本的 person 等基础表
 
-    # 把 person_field 还原成 v6 形状（带 field 外键），模拟已发布的 v0.1.0 数据库。
+    # 还原 v6 形状（field 表 + 外键 + 两列拼音），模拟已发布的 v0.1.0 数据库。
     conn = sqlite3.connect(path)
     try:
         conn.executescript(
             '''
+            ALTER TABLE person ADD COLUMN pinyin TEXT NOT NULL DEFAULT '';
+            ALTER TABLE person ADD COLUMN initials TEXT NOT NULL DEFAULT '';
             DROP TABLE person_field;
             CREATE TABLE field (
                 key         TEXT PRIMARY KEY,
@@ -75,7 +77,7 @@ def test_v6库升级保留属性字段并删掉注册表(tmp_path: Path) -> None
                 PRIMARY KEY (person_id, field_key, value)
             );
             CREATE INDEX ix_person_field_value ON person_field(value);
-            INSERT INTO person (id, display_name) VALUES (1, '张三');
+            INSERT INTO person (id, display_name, pinyin) VALUES (1, '张三', 'zhangsan');
             INSERT INTO field (key, label) VALUES ('wechat', '微信');
             INSERT INTO person_field (person_id, field_key, value)
                 VALUES (1, 'wechat', 'wx1');
@@ -103,6 +105,51 @@ def test_v6库升级保留属性字段并删掉注册表(tmp_path: Path) -> None
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
+        columns = {
+            str(row[1]) for row in check.execute('PRAGMA table_info(person)')
+        }
     finally:
         check.close()
     assert 'field' not in tables
+    assert 'pinyin' not in columns and 'initials' not in columns
+
+
+def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
+    path = tmp_path / 'v7.db'
+    SqliteRepo(path).close()
+
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(
+            '''
+            ALTER TABLE person ADD COLUMN pinyin TEXT NOT NULL DEFAULT '';
+            ALTER TABLE person ADD COLUMN initials TEXT NOT NULL DEFAULT '';
+            INSERT INTO person (id, display_name, pinyin, initials)
+                VALUES (7, '李四', 'lisi', 'ls');
+            INSERT INTO person_company (person_id, on_date, company)
+                VALUES (7, '2026-10-20', '腾讯');
+            PRAGMA user_version = 7;
+            '''
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    migrated = SqliteRepo(path)
+    try:
+        assert migrated.schema_version == SCHEMA_VERSION
+        person = migrated.get_person(7)
+        assert person is not None
+        assert person.display_name == '李四'
+        assert person.companies == {date(2026, 10, 20): '腾讯'}
+    finally:
+        migrated.close()
+
+    check = sqlite3.connect(path)
+    try:
+        columns = [str(row[1]) for row in check.execute('PRAGMA table_info(person)')]
+    finally:
+        check.close()
+    assert columns == [
+        'id', 'display_name', 'role', 'notes', 'last_contact_at', 'archived'
+    ]

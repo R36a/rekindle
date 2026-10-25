@@ -217,3 +217,12 @@ def test_导出导入包含关系(repo: SqliteRepo, tmp_path: Path) -> None:
         assert len(restored.list_relations(zhang)) == 2
     finally:
         restored.close()
+
+
+def test_数据库CHECK覆盖全部关系类型(repo: SqliteRepo) -> None:
+    # 「类型清单」还有第三份：DDL 里的 CHECK。加了类型忘了改它，插入会被数据库拒绝。
+    sql = repo._conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'person_relation'"
+    ).fetchone()[0]
+    for kind in RelationKind:
+        assert f"'{kind.value}'" in sql

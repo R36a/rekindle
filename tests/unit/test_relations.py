@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from rekindle.domain.models import Relation
 from rekindle.domain.relations import (
-    RELATION_KINDS,
+    RELATIONS,
     SELECTABLE_KINDS,
     SELECTABLE_LABELS,
     RelationKind,
@@ -22,8 +22,14 @@ NOW = datetime(2026, 10, 24, 9, 0)
 
 def test_关系类型按浅到深排列() -> None:
     assert SELECTABLE_LABELS == ('陌生人', '客户', '同事', '同学', '朋友', '亲戚')
-    assert [spec.rank for spec in RELATION_KINDS] == [0, 1, 2, 3, 4, 5]
+    assert [rank_of(kind) for kind in SELECTABLE_KINDS] == [0, 1, 2, 3, 4, 5]
     assert RelationKind.INTRODUCED not in SELECTABLE_KINDS
+
+
+def test_每个关系类型都有展示信息() -> None:
+    # 加了新类型却忘了登记 → 这里失败；label_of 也就不会 KeyError 了。
+    assert set(RELATIONS) == set(RelationKind)
+    assert label_of(RelationKind.INTRODUCED) == '介绍'
 
 
 def test_关系标签与排序() -> None:

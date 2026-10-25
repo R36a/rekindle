@@ -1,7 +1,10 @@
-'''人与人之间的关系类型。
+'''人与人之间的关系类型：一张表，其余全是它的投影。
 
-六种「认识」关系按社交距离从浅到深排列；`introduced` 是系统类型，
-表示「谁介绍谁」，不参与下拉选择，也不参与深浅排序。
+六种「认识」关系按社交距离从浅到深排列；`introduced` 是系统类型（谁介绍谁），
+不参与下拉选择，也不参与深浅排序。
+
+以前还有 RELATION_LABELS / RELATION_RANK 两个平行字典，推导完再按下标补一行
+（`[INTRODUCED] = '介绍'` / `= 99`），等于同一份数据写两遍；现在只有 RELATIONS。
 '''
 
 from __future__ import annotations
@@ -24,41 +27,40 @@ class RelationKind(StrEnum):
 
 @dataclass(frozen=True)
 class RelationSpec:
-    kind: RelationKind
+    '''一种关系的展示信息。key 就是 RELATIONS 的键，不在这里重复存。'''
+
     label: str
     rank: int
 
 
-# 顺序即 UI 下拉顺序：浅 → 深。
-RELATION_KINDS: tuple[RelationSpec, ...] = (
-    RelationSpec(RelationKind.STRANGER, '陌生人', 0),
-    RelationSpec(RelationKind.CLIENT, '客户', 1),
-    RelationSpec(RelationKind.COLLEAGUE, '同事', 2),
-    RelationSpec(RelationKind.CLASSMATE, '同学', 3),
-    RelationSpec(RelationKind.FRIEND, '朋友', 4),
-    RelationSpec(RelationKind.RELATIVE, '亲戚', 5),
-)
-
-SELECTABLE_KINDS: tuple[RelationKind, ...] = tuple(
-    spec.kind for spec in RELATION_KINDS
-)
-SELECTABLE_LABELS: tuple[str, ...] = tuple(spec.label for spec in RELATION_KINDS)
-KIND_BY_LABEL: dict[str, RelationKind] = {
-    spec.label: spec.kind for spec in RELATION_KINDS
+# 顺序即 UI 下拉顺序：浅 → 深；系统类型排在最后，rank 用 99 表示「不参与排序」。
+RELATIONS: dict[RelationKind, RelationSpec] = {
+    RelationKind.STRANGER: RelationSpec('陌生人', 0),
+    RelationKind.CLIENT: RelationSpec('客户', 1),
+    RelationKind.COLLEAGUE: RelationSpec('同事', 2),
+    RelationKind.CLASSMATE: RelationSpec('同学', 3),
+    RelationKind.FRIEND: RelationSpec('朋友', 4),
+    RelationKind.RELATIVE: RelationSpec('亲戚', 5),
+    RelationKind.INTRODUCED: RelationSpec('介绍', 99),
 }
-RELATION_LABELS: dict[str, str] = {
-    spec.kind.value: spec.label for spec in RELATION_KINDS
-}
-RELATION_LABELS[RelationKind.INTRODUCED.value] = '介绍'
-RELATION_RANK: dict[str, int] = {
-    spec.kind.value: spec.rank for spec in RELATION_KINDS
-}
-RELATION_RANK[RelationKind.INTRODUCED.value] = 99
 
 
 def label_of(kind: RelationKind) -> str:
-    return RELATION_LABELS[kind.value]
+    return RELATIONS[kind].label
 
 
 def rank_of(kind: RelationKind) -> int:
-    return RELATION_RANK[kind.value]
+    return RELATIONS[kind].rank
+
+
+# 下面三个都是同一张表的投影，不新增事实。
+SELECTABLE_KINDS: tuple[RelationKind, ...] = tuple(
+    kind for kind in RELATIONS if kind is not RelationKind.INTRODUCED
+)
+SELECTABLE_LABELS: tuple[str, ...] = tuple(
+    label_of(kind) for kind in SELECTABLE_KINDS
+)
+KIND_BY_LABEL: dict[str, RelationKind] = {
+    label_of(kind): kind for kind in SELECTABLE_KINDS
+}
+

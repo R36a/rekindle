@@ -31,6 +31,15 @@
 - [ ] 增量迁移（**发布前**；开发期允许重置库，见「迁移策略」）
 - [ ] 明天做**（示例占位，待明确）
 
+## 幽灵代码清理（2026-10-25，schema v8）
+
+- [x] **删 `models.Alias`**：全仓无构造（`add_alias` 直接写 SQL），死模型；`alias` 表与搜索不受影响
+- [x] **删 `person.pinyin` / `person.initials`**：从建库起从未写入，拼音搜索未实现；`Person` 模型、DDL、读写 SQL 一并去掉（v7→v8 用 `ALTER TABLE … DROP COLUMN`）
+- [x] **迁移改成逐版本步骤**：`_MIGRATION_STEPS = {6: v6→v7, 7: v7→v8}`，`_upgrade()` 顺序执行；更老的开发库仍走重建（TODO「迁移策略」）
+- [x] **旧备份兼容**：`_RETIRED_COLUMNS` 让导入忽略已删除的列（v3 备份里带 pinyin/initials 也能导），不再把整份备份判成「未知列」
+- [x] **旧快照可用**：`restore_snapshot` 对旧版本快照先在临时副本上升级再恢复（原文件不动），只有「比程序新」或「太旧无迁移路径」才拒绝
+- [ ] **保留 `extract_llm` + `llm_http`**（用户决定不删）：仍无入口，建议后续加一条 `httpx.MockTransport` 契约测试防腐烂
+
 ## 字段注册表（2026-10-25 彻底重构）
 
 - [x] **`domain/person_schema.py` = 唯一字段定义**：`PersonField`（key/标签/存储方式/约束/可搜/摘要顺序/CLI/表单宽度），`PERSON_FIELDS` 一项声明
@@ -44,7 +53,8 @@
 
 ## 尚未做（有意保留）
 
-- [ ] **API 出入参**：`ManualIn/ConfirmIn/PersonOut` 仍逐字段手写——那是对外契约（`name` 别名、必填规则不同），且 `mypy --strict` 需要静态类型，动态 `create_model` 会失效
+- [x] **API 出参**：`_Out` 基类 + `ConfigDict(from_attributes=True)` + `@field_serializer`（date 键 → ISO），删掉 `_person_out` / `_interaction_out` / `_confirm_out`；端点直接返回领域对象（`RecordedCapture` / `ConfirmResult` / `PersonDetail`）
+- [ ] **API 入参**：`ManualIn/ConfirmIn` 仍显式声明——对外契约（`name` 别名、必填规则与内部不同），且 `mypy --strict` 需要静态类型，`create_model` 会让类型检查失效
 - [ ] **迁移脚本**：v6→v7 这类历史步骤不能从当前注册表重算，保持显式
 
 ## 代码重复治理（2026-10-25 体检）
@@ -69,8 +79,8 @@
 - [x] **P1 删 `RELATIVE_ORDER`**：`RELATIVE_DAYS` 的 dict 顺序即遍历顺序（这些词两两不互为子串）
 - [x] **P2 人员展示格式统一**：并入 `ui.fill_person_choices`
 - [x] **P2 UI 错误弹窗**：评估后**不抽**包装——`messagebox.showerror` 本身就是唯一实现，各站点标题与后续动作不同；抽一层只是别名，不消除逻辑
-- [ ] **P2 API DTO 复制 domain 模型**：`PersonOut` / `ConfirmOut` + 3 个 `_x_out` 逐字段搬运，用 `from_attributes` + `field_serializer`
-- [ ] **P2 关系类型 9 个派生结构**：`domain/relations.py` 里 5 个投影 + 2 个函数只表达 6 行数据
+- [x] **P2 API DTO 复制 domain 模型**：出参改为 `from_attributes` 投影 + `field_serializer`，删掉 3 个逐字段搬运函数（api.py 257 → 233 行，行为不变：JSON 形状与之前逐字节一致）
+- [x] **P2 关系类型 10 个名字 → 1 张表**：`RELATIONS: dict[RelationKind, RelationSpec]` 一处声明；删掉 `RELATION_KINDS` 与 `RELATION_LABELS`/`RELATION_RANK` 两个平行字典（原来是「推导完再按下标补一行」），`RelationSpec` 不再重复存 kind；新增两条守卫测试（每个 kind 必须登记、DDL 的 CHECK 必须覆盖全部 kind）
 
 ## 已完成
 

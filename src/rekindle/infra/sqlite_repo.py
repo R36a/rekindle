@@ -7,7 +7,7 @@ v0.3 只存「人 / 别名 / 原始输入 / 交往记录」：提醒与待办按
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -36,7 +36,7 @@ from rekindle.domain.person_schema import SEARCHABLE_FIELDS, Storage
 from rekindle.domain.relations import RelationKind
 from rekindle.infra.schema_sql import person_table_sql
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # 关系类型的取值与 domain/relations.py 的 RelationKind 同步（DB 只做兜底 CHECK）；
 # 以后允许自定义类型时，改成 relation_kind 表并做下一次迁移。
@@ -122,6 +122,50 @@ _SCHEMA = (
     'CREATE INDEX ix_person_relation_b ON person_relation(person_b_id)',
 )
 
+def _v6_to_v7(conn: sqlite3.Connection) -> None:
+    '''v6 → v7：去掉只承担外键的 field 表，属性字段的值原样保留。
+
+    field 表里的 label / field_type / description / builtin 从来没有读者，
+    等于把「有哪些字段」这条事实存了两份（另一份是 DEFAULT_FIELDS），
+    所以删表；person_field 按同一份 DDL 重建（去掉外键），值不动。
+    '''
+    conn.execute('ALTER TABLE person_field RENAME TO person_field_v6')
+    conn.execute(_PERSON_FIELD_DDL)
+    conn.execute(
+        'INSERT INTO person_field (person_id, field_key, value) '
+        'SELECT person_id, field_key, value FROM person_field_v6'
+    )
+    conn.execute('DROP TABLE person_field_v6')  # 连带删掉旧索引
+    conn.execute(_PERSON_FIELD_INDEX)
+    conn.execute('DROP TABLE IF EXISTS field')
+
+
+def _v7_to_v8(conn: sqlite3.Connection) -> None:
+    '''v7 → v8：删掉 pinyin / initials 两列。
+
+    它们从建库起就没被写过（拼音搜索从未实现），属于"预留给未来"的幽灵列。
+    真要拼音搜索时再按字段注册表加回来，并由 DDL 生成器一并处理。
+    '''
+    for column in ('pinyin', 'initials'):
+        conn.execute(f'ALTER TABLE person DROP COLUMN {column}')
+
+
+# 「当前版本 → 下一版本」的迁移步骤：只增不改，每一步都必须保住数据。
+_MIGRATION_STEPS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    6: _v6_to_v7,
+    7: _v7_to_v8,
+}
+
+
+def can_upgrade_from(version: int) -> bool:
+    '''这个版本有没有逐步迁移路径（False = 只能重建，数据会丢）。'''
+    return version in _MIGRATION_STEPS
+
+# 已经删掉的列：老备份里仍带着它们，导入时忽略，而不是当「未知列」拒绝整份备份。
+_RETIRED_COLUMNS: dict[str, frozenset[str]] = {
+    'person': frozenset({'pinyin', 'initials'}),
+}
+
 # 导出顺序 = 外键的父 → 子；导入按同样顺序插入。
 _TABLES = (
     'person',
@@ -162,8 +206,6 @@ def _person(
     return Person(
         id=row['id'],
         display_name=row['display_name'],
-        pinyin=row['pinyin'],
-        initials=row['initials'],
         companies=companies,
         fields=fields,
         role=row['role'],
@@ -279,36 +321,30 @@ class SqliteRepo:
                 f'数据库版本 {version} 高于程序支持的 {SCHEMA_VERSION}，请升级 rekindle'
             )
         with self.transaction():
-            if version == 6:
-                # v6 → v7 只删字段注册表：已经发布过的库必须保住数据。
-                self._drop_field_registry()
-            else:
-                # 开发期策略（TODO「迁移策略」）：v6 以外的旧库直接重建。
-                for table in _LEGACY_TABLES:
-                    self._conn.execute(f'DROP TABLE IF EXISTS {table}')
+            if version == 0:
                 self._create_schema()
+            else:
+                self._upgrade(version)
             self._conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
 
     def _create_schema(self) -> None:
         for statement in _SCHEMA:
             self._conn.execute(statement)
 
-    def _drop_field_registry(self) -> None:
-        '''v6 → v7：去掉只承担外键的 field 表，属性字段的值原样保留。
+    def _upgrade(self, version: int) -> None:
+        '''按版本逐步迁移；没有对应步骤的早期开发库直接重建（会丢数据）。'''
+        while version < SCHEMA_VERSION:
+            step = _MIGRATION_STEPS.get(version)
+            if step is None:
+                self._rebuild()
+                return
+            step(self._conn)
+            version += 1
 
-        field 表里的 label / field_type / description / builtin 从来没有读者，
-        等于把「有哪些字段」这条事实存了两份（另一份是 DEFAULT_FIELDS）。
-        现在唯一来源是 domain/fields.py；person_field 按同一份 DDL 重建。
-        '''
-        self._conn.execute('ALTER TABLE person_field RENAME TO person_field_v6')
-        self._conn.execute(_PERSON_FIELD_DDL)
-        self._conn.execute(
-            'INSERT INTO person_field (person_id, field_key, value) '
-            'SELECT person_id, field_key, value FROM person_field_v6'
-        )
-        self._conn.execute('DROP TABLE person_field_v6')  # 连带删掉旧索引
-        self._conn.execute(_PERSON_FIELD_INDEX)
-        self._conn.execute('DROP TABLE IF EXISTS field')
+    def _rebuild(self) -> None:
+        for table in _LEGACY_TABLES:
+            self._conn.execute(f'DROP TABLE IF EXISTS {table}')
+        self._create_schema()
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -479,12 +515,10 @@ class SqliteRepo:
     def add_person(self, person: Person) -> int:
         with self._atomic():
             cur = self._conn.execute(
-                'INSERT INTO person (display_name, pinyin, initials, role, notes, '
-                'last_contact_at, archived) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO person (display_name, role, notes, '
+                'last_contact_at, archived) VALUES (?, ?, ?, ?, ?)',
                 (
                     person.display_name,
-                    person.pinyin,
-                    person.initials,
                     person.role,
                     person.notes,
                     _iso(person.last_contact_at),
@@ -501,12 +535,10 @@ class SqliteRepo:
             raise ValueError('update_person 需要 person.id')
         with self._atomic():
             self._conn.execute(
-                'UPDATE person SET display_name = ?, pinyin = ?, initials = ?, '
-                'role = ?, notes = ?, last_contact_at = ?, archived = ? WHERE id = ?',
+                'UPDATE person SET display_name = ?, role = ?, notes = ?, '
+                'last_contact_at = ?, archived = ? WHERE id = ?',
                 (
                     person.display_name,
-                    person.pinyin,
-                    person.initials,
                     person.role,
                     person.notes,
                     _iso(person.last_contact_at),
@@ -697,8 +729,11 @@ class SqliteRepo:
                     str(r['name'])
                     for r in self._conn.execute(f'PRAGMA table_info({table})')
                 }
+                retired = _RETIRED_COLUMNS.get(table, frozenset())
                 for raw_row in tables.get(table, []):
-                    columns = list(raw_row)
+                    # 老备份可能还带着已删除的列（pinyin/initials）：忽略它们，
+                    # 而不是把整份备份判成「未知列」。
+                    columns = [name for name in raw_row if name not in retired]
                     unknown = set(columns) - allowed
                     if unknown:
                         raise BackupFormatError(f'{table} 出现未知列：{sorted(unknown)}')
