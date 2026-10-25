@@ -224,6 +224,11 @@ class RelationDialog(tk.Toplevel):
     def _create_and_link(
         self, kind: RelationKind, note: str | None, now: datetime
     ) -> None:
+        '''新建联系人 + 记介绍 + 记关系：三步要么全成，要么全不成。
+
+        以前每一步各自提交，第二步失败会留下「人建了、关系没建」；
+        现在包在可嵌套的 atomic() 里（record.manual 内部也用 atomic，复用外层）。
+        '''
         name = self._name_var.get().strip()
         if not name:
             raise ValueError('请选择已有联系人，或填写新联系人姓名')
@@ -232,28 +237,29 @@ class RelationDialog(tk.Toplevel):
             for key, var in self._field_vars.items()
             if var.get().strip()
         }
-        result = record.manual(
-            self._repo,
-            now=now,
-            display_name=name,
-            company=self._company.get(),
-            role=self._role.get(),
-            fields=fields,
-            occurred_on=date.today(),
-        )
-        relation_uc.add_introduction(
-            self._repo,
-            introducer_id=self._person_id,
-            introduced_id=result.person_id,
-            note=None,
-            now=now,
-        )
-        relation_uc.add_relation(
-            self._repo,
-            person_id=self._person_id,
-            other_id=result.person_id,
-            kind=kind,
-            note=note,
-            now=now,
-        )
+        with self._repo.atomic():
+            result = record.manual(
+                self._repo,
+                now=now,
+                display_name=name,
+                company=self._company.get(),
+                role=self._role.get(),
+                fields=fields,
+                occurred_on=date.today(),
+            )
+            relation_uc.add_introduction(
+                self._repo,
+                introducer_id=self._person_id,
+                introduced_id=result.person_id,
+                note=None,
+                now=now,
+            )
+            relation_uc.add_relation(
+                self._repo,
+                person_id=self._person_id,
+                other_id=result.person_id,
+                kind=kind,
+                note=note,
+                now=now,
+            )
 

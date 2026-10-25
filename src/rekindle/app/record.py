@@ -182,7 +182,7 @@ def _commit(
     manual 与 confirm 只有「摘要怎么来、要不要完结草稿」不同，
     写入流程共用这一份实现——以前是两个各 20 行的复制块。
     '''
-    with repo.transaction():
+    with repo.atomic():
         person_id, person_name, created_new = _upsert_person(
             repo,
             display_name=display_name,

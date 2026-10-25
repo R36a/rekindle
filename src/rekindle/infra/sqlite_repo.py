@@ -348,7 +348,7 @@ class SqliteRepo:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        '''显式事务；不支持嵌套（内层请用 _atomic）。'''
+        '''显式事务；不支持嵌套（内层请用 atomic()）。'''
         if self._conn.in_transaction:
             raise RuntimeError('不支持嵌套事务')
         self._conn.execute('BEGIN')
@@ -361,8 +361,13 @@ class SqliteRepo:
             self._conn.execute('COMMIT')
 
     @contextmanager
-    def _atomic(self) -> Iterator[None]:
-        '''已经在事务里就复用外层，否则自己开一个。'''
+    def atomic(self) -> Iterator[None]:
+        '''可嵌套的事务：已经在事务里就复用外层，否则自己开一个。
+
+        跨用例的「要么全成、要么全不成」用它（例如关系对话框里
+        建人 + 记介绍 + 记关系）；必须在最外层落地的（迁移、整库导入）
+        仍用 transaction()，那样嵌套时能立刻报错。
+        '''
         if self._conn.in_transaction:
             yield
         else:
@@ -513,7 +518,7 @@ class SqliteRepo:
                     )
 
     def add_person(self, person: Person) -> int:
-        with self._atomic():
+        with self.atomic():
             cur = self._conn.execute(
                 'INSERT INTO person (display_name, role, notes, '
                 'last_contact_at, archived) VALUES (?, ?, ?, ?, ?)',
@@ -533,7 +538,7 @@ class SqliteRepo:
     def update_person(self, person: Person) -> None:
         if person.id is None:
             raise ValueError('update_person 需要 person.id')
-        with self._atomic():
+        with self.atomic():
             self._conn.execute(
                 'UPDATE person SET display_name = ?, role = ?, notes = ?, '
                 'last_contact_at = ?, archived = ? WHERE id = ?',
@@ -629,7 +634,7 @@ class SqliteRepo:
         if relation.kind != RelationKind.INTRODUCED:
             person_a_id, person_b_id = sorted((person_a_id, person_b_id))
         try:
-            with self._atomic():
+            with self.atomic():
                 cur = self._conn.execute(
                     'INSERT INTO person_relation '
                     '(person_a_id, person_b_id, kind, note, created_at) '

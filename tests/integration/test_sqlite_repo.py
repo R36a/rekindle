@@ -153,3 +153,15 @@ def test_v7库升级删掉拼音列但保住数据(tmp_path: Path) -> None:
     assert columns == [
         'id', 'display_name', 'role', 'notes', 'last_contact_at', 'archived'
     ]
+
+
+def test_atomic可嵌套且外层回滚(repo: SqliteRepo) -> None:
+    # 故意嵌套两层：验证内层复用外层、外层失败时整体回滚（不能合并成一个 with）。
+    with pytest.raises(RuntimeError):  # noqa: SIM117
+        with repo.atomic():
+            repo.add_person(Person(display_name='张三'))
+            with repo.atomic():
+                repo.add_person(Person(display_name='李四'))
+            raise RuntimeError('boom')
+
+    assert repo.export_all()['person'] == []

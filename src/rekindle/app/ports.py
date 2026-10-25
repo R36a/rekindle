@@ -28,7 +28,11 @@ class Repo(Protocol):
     '''app 层需要的全部存储能力：读写人、记录、关系与整库备份。'''
 
     def transaction(self) -> AbstractContextManager[None]:
-        '''把多个写操作合成一个事务；不可嵌套。'''
+        '''把多个写操作合成一个事务；**不可嵌套**（最外层用这个）。'''
+        ...
+
+    def atomic(self) -> AbstractContextManager[None]:
+        '''可嵌套的事务：已在事务里就复用外层，否则自己开一个。'''
         ...
 
     # ---------- 原始输入 ----------

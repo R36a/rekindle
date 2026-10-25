@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from rekindle.app import relations as relation_uc
+from rekindle.domain.errors import InvalidRelation
 from rekindle.domain.models import Person
 from rekindle.domain.relations import RelationKind
 
@@ -328,3 +329,27 @@ def test_关系对话框新建联系人(
 def test_表单字段由注册表生成(app: Any) -> None:
     # build_grid 返回的键就是字段 key：注册表改了，表单自动跟着变。
     assert list(app._form_widgets) == ['display_name', 'company', 'role']
+
+
+def test_新建联系人时关系写入失败不会留下半条数据(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialog_module = pytest.importorskip('rekindle.interfaces.relation_dialog')
+    monkeypatch.setattr(
+        dialog_module.messagebox, 'showerror', lambda *args, **kwargs: None
+    )
+
+    def boom(*args: object, **kwargs: object) -> int:
+        raise InvalidRelation('boom')
+
+    monkeypatch.setattr(dialog_module.relation_uc, 'add_relation', boom)
+    zhang = app._repo.add_person(Person(display_name='张三'))
+
+    dialog = dialog_module.RelationDialog(app, app._repo, zhang, lambda: None)
+    dialog._name_var.set('李四')
+    dialog._save()
+
+    # 关系写入失败 → 同一事务里建的人与介绍关系都要回滚。
+    assert [p.display_name for p in app._repo.list_people()] == ['张三']
+    assert app._repo.list_relations(zhang) == []
+    dialog.destroy()
