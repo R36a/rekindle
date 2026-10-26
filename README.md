@@ -43,7 +43,7 @@
 
 重新打包：`pip install -e ".[build]"`，然后 `.\tools\build_exe.ps1`（产物在 `dist\`）。
 
-发布：推一个 `v*` tag（如 `v0.1.0`）会自动构建 exe 并上传到 Releases，见 `.github/workflows/release.yml`。
+发布：推一个 `v*` tag（如 `v0.1.1`）会自动构建 exe 并上传到 Releases，见 `.github/workflows/release.yml`。
 
 ## 从源码运行（开发）
 
