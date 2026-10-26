@@ -49,6 +49,8 @@
 
 需要 **Python 3.14+**（与 `pyproject.toml` 的 `requires-python` 一致；CI 也只测这个版本）。
 
+> 测试分层：单元 65 / 集成 103 / 冒烟 4（共 172）；核心层覆盖率 95%，总覆盖 88%。未做 exe 级 E2E。
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
